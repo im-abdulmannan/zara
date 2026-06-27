@@ -1,0 +1,18 @@
+# Zara AI Assistant — Python 3.11+
+python-dotenv>=1.0
+openai>=2.0
+google-genai>=1.0
+APScheduler>=3.10
+SQLAlchemy>=2.0
+dateparser>=1.2
+faster-whisper>=1.0
+pyttsx3>=2.90
+sounddevice>=0.5
+webrtcvad-wheels>=2.0.10
+scipy>=1.11
+win11toast>=0.30
+pywin32>=306
+Pillow>=10.0
+pycaw>=20240210
+comtypes>=1.4
+wmi>=1.5.1; sys_platform == "win32"

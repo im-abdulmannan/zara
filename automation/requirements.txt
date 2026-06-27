@@ -1,0 +1,4 @@
+# Automation engine dependencies (Python 3.11)
+APScheduler>=3.10,<4.0
+SQLAlchemy>=2.0      # required only for the persistent (sqlite/postgres/...) job store
+tzlocal>=5.0        # pulled in by APScheduler; used to detect the local timezone
