@@ -1,15 +1,6 @@
-"""High-level voice interaction orchestration.
+"""High-level voice interaction orchestration (backward-compatible facade).
 
-Coordinates wake-word detection, VAD capture, transcription, and state
-transitions. Designed so future features can plug in without rewriting
-the core loop:
-
-- **Interrupt during TTS**: pass ``should_stop`` callbacks or swap the
-  speaker for an interruptible implementation.
-- **Continuous conversation**: set ``return_to_wake_after_turn=False`` and
-  reuse :meth:`VoiceSession.listen_for_command` in a inner loop.
-- **Streaming STT**: replace :class:`WhisperTranscriber` with a streaming
-  implementation fed from :class:`UtteranceRecorder` chunks.
+New integrations should use :class:`core.orchestrator.VoiceOrchestrator`.
 """
 from __future__ import annotations
 
@@ -19,9 +10,13 @@ from typing import Callable, Iterable, Optional, Sequence
 
 import numpy as np
 
+from core.logging_config import get_logger
 from voice.config import DEFAULT_LISTENING_CONFIG, ListeningConfig
-from voice.listener import RecordingPhase, RecordingResult, UtteranceRecorder
-from voice.stt import WhisperTranscriber, transcribe
+from voice.stt import WhisperTranscriber
+from voice.vad_listener import CapturePhase, VadListener
+from voice.wake_word import WakeWordDetector
+
+_logger = get_logger(__name__)
 
 
 class SessionPhase(enum.Enum):
@@ -54,34 +49,40 @@ class VoiceSession:
     on_phase_change: Callable[[SessionPhase], None] | None = None
 
     def __post_init__(self) -> None:
-        self._awake = False
-        self._recorder = UtteranceRecorder(config=self.config)
+        self._phase = SessionPhase.WAITING_FOR_WAKE
+        self._wake = WakeWordDetector(
+            phrases=self.wake_phrases,
+            sleep_phrases=self.sleep_phrases,
+        )
+        self._listener = VadListener(config=self.config)
 
     @property
     def is_awake(self) -> bool:
-        return self._awake
+        return self._phase in (
+            SessionPhase.READY,
+            SessionPhase.LISTENING,
+            SessionPhase.PROCESSING,
+        )
 
     def wake(self) -> None:
-        self._awake = True
         self._set_phase(SessionPhase.READY)
 
     def sleep(self) -> None:
-        self._awake = False
         self._set_phase(SessionPhase.WAITING_FOR_WAKE)
 
     def listen_for_wake(self) -> Optional[VoiceTurn]:
         """Wait indefinitely for speech and check for a wake phrase."""
         self._set_phase(SessionPhase.WAITING_FOR_WAKE)
-        print("Waiting for wake word...")
+        _logger.info("Waiting for wake word")
 
-        result = self._recorder.record(wait_for_speech=False)
-        if not result.succeeded:
+        result = self._listener.capture(wait_for_speech=False)
+        if not result.succeeded or result.audio is None:
             return None
 
         text = self.transcriber.transcribe(result.audio)
-        print("You:", text)
+        _logger.info("Heard: %r", text)
 
-        if self._contains_phrase(text, self.wake_phrases):
+        if self._wake.is_wake(text):
             self.wake()
             return VoiceTurn(text=text, audio=result.audio, session_phase=SessionPhase.READY)
 
@@ -90,23 +91,23 @@ class VoiceSession:
     def listen_for_command(self) -> Optional[VoiceTurn]:
         """After wake, wait for the user to speak and return their command."""
         self._set_phase(SessionPhase.READY)
-        print("Ready — speak when you like.")
+        _logger.info("Ready for command")
 
-        result = self._recorder.record(
+        result = self._listener.capture(
             wait_for_speech=True,
             initial_wait_timeout=self.config.initial_wait_timeout,
         )
 
-        if result.phase is RecordingPhase.TIMED_OUT:
-            print("No speech detected (initial wait timed out).")
+        if result.phase is CapturePhase.TIMED_OUT:
+            _logger.info("No speech detected (initial wait timed out)")
             return None
 
-        if not result.succeeded:
+        if not result.succeeded or result.audio is None:
             return None
 
         self._set_phase(SessionPhase.LISTENING)
         text = self.transcriber.transcribe(result.audio)
-        print("You:", text)
+        _logger.info("User command: %r", text)
         return VoiceTurn(
             text=text.strip(),
             audio=result.audio,
@@ -121,7 +122,7 @@ class VoiceSession:
         return self.listen_for_command()
 
     def is_sleep_command(self, text: str) -> bool:
-        return self._contains_phrase(text, self.sleep_phrases)
+        return self._wake.is_sleep(text)
 
     def finish_turn(self) -> None:
         """Return to wake-word mode after responding (unless continuous mode)."""
@@ -134,9 +135,5 @@ class VoiceSession:
             self.on_phase_change(phase)
 
     def _set_phase(self, phase: SessionPhase) -> None:
+        self._phase = phase
         self.set_phase(phase)
-
-    @staticmethod
-    def _contains_phrase(text: str, phrases: Iterable[str]) -> bool:
-        normalized = text.lower().strip()
-        return any(phrase in normalized for phrase in phrases)

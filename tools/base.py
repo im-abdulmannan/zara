@@ -65,3 +65,8 @@ class BaseTool(ABC):
             if param.required:
                 example[param.name] = f"<{param.name}>"
         return str(example).replace("'", '"')
+
+    def can_handle(self, intent: str) -> bool:
+        """Return True when this tool should handle *intent* (override in subclasses)."""
+        normalized = (intent or "").lower().strip().replace(" ", "_")
+        return normalized == self.name.lower()

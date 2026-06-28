@@ -7,7 +7,10 @@ from typing import Optional
 import numpy as np
 from faster_whisper import WhisperModel
 
+from core.logging_config import get_logger
 from voice.config import DEFAULT_LISTENING_CONFIG, ListeningConfig
+
+_logger = get_logger(__name__)
 
 
 @dataclass
@@ -52,7 +55,7 @@ _default_transcriber = WhisperTranscriber()
 def transcribe(audio: np.ndarray) -> str:
     """Transcribe *audio* using the shared Whisper model."""
     text = _default_transcriber.transcribe(audio)
-    print("You:", text)
+    _logger.info("Transcript: %r", text)
     return text
 
 

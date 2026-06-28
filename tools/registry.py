@@ -114,6 +114,14 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return sorted(self._tools.keys())
 
+    def all_tools(self) -> list[BaseTool]:
+        """Return registered tool instances for discovery / plugins."""
+        return list(self._tools.values())
+
+    def find_for_intent(self, intent: str) -> list[BaseTool]:
+        """Return tools that claim they can handle *intent*."""
+        return [tool for tool in self.all_tools() if tool.can_handle(intent)]
+
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values()]
 
