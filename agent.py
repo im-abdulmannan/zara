@@ -1,12 +1,9 @@
 import json
 from datetime import datetime
 
-from openai import OpenAI
+from openai import APIStatusError, OpenAI, RateLimitError
 
-from config import (
-    OPENROUTER_API_KEY,
-    MODEL_NAME
-)
+from config import OPENROUTER_API_KEY, MODEL_NAME
 from intent import classify_intent
 from memory.memory import load_history, save_history
 from memory.store import memory_summary, auto_capture
@@ -49,12 +46,37 @@ def build_system_prompt() -> str:
         + _GROUNDING_RULES
     )
 
-FALLBACK_MODELS = [
-    MODEL_NAME,
-    "meta-llama/llama-3-8b-instruct:free",
-    "qwen/qwen-2-7b-instruct:free",
-    "mistralai/mistral-7b-instruct:free"
+MODEL_FALLBACKS = [
+    "openai/gpt-oss-120b:free",
+    "qwen/qwen3-coder:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemma-4-31b-it:free",
+    "openai/gpt-oss-20b:free",
 ]
+
+
+def _model_chain() -> list[str]:
+    """Primary model from env, then fallbacks without duplicates."""
+    chain: list[str] = []
+    seen: set[str] = set()
+    for model in ([MODEL_NAME] if MODEL_NAME else []) + MODEL_FALLBACKS:
+        if model and model not in seen:
+            seen.add(model)
+            chain.append(model)
+    return chain
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    if isinstance(exc, RateLimitError):
+        return True
+    return isinstance(exc, APIStatusError) and exc.status_code == 429
+
+
+def _log_model_failure(model: str, exc: Exception) -> None:
+    if _is_rate_limited(exc):
+        print(f"{model} rate limited (429), trying next model...")
+    else:
+        print(f"{model} failed: {exc}")
 
 conversation = load_history()
 
@@ -111,26 +133,22 @@ def ask_agent(user_text):
     )
 
     reply = None
-    last_error = None
 
-    for model in FALLBACK_MODELS:
-        if not model:
-            continue
+    for model in _model_chain():
         try:
             response = client.chat.completions.create(
                 model=model,
-                messages=messages
+                messages=messages,
             )
             reply = response.choices[0].message.content
             if reply:
                 break
-        except Exception as e:
-            print(f"Warning: Model {model} failed: {e}")
-            last_error = e
+        except Exception as exc:
+            _log_model_failure(model, exc)
             continue
 
     if reply is None:
-        raise last_error or RuntimeError("All models in the fallback chain failed.")
+        raise RuntimeError("All models failed.")
 
     conversation.append({
         "role": "assistant",

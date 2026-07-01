@@ -3,13 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
-from tools.applications import (
-    CloseApplicationTool,
-    OpenApplicationTool,
-    SearchInstalledAppsTool,
-)
 from tools.base import BaseTool, ToolResult
-from tools.browser import LaunchUrlTool, OpenWebsiteTool, SearchGoogleTool
 from tools.domain import (
     CancelReminderTool,
     CreateHabitTool,
@@ -28,55 +22,30 @@ from tools.domain import (
     SearchNotesTool,
     SetReminderTool,
 )
-from tools.filesystem import (
-    CopyFileTool,
-    CreateFolderTool,
-    DeleteFileTool,
-    MoveFileTool,
-    OpenFolderTool,
-    RenameFileTool,
-    SearchFilesTool,
-)
 from tools.logging_config import get_logger
-from tools.system import (
-    ClipboardManagerTool,
-    ControlBrightnessTool,
-    ControlVolumeTool,
-    GetTimeTool,
-    LockScreenTool,
-    RestartPcTool,
-    ShutdownPcTool,
-    SleepPcTool,
-    TakeScreenshotTool,
-)
+from tools.registration import registered_tool_classes
 
 _logger = get_logger(__name__)
+_modules_loaded = False
 
 
-def _default_tools() -> list[BaseTool]:
+def _load_tool_modules() -> None:
+    """Import tool modules so :func:`register_tool` decorators run."""
+    global _modules_loaded
+    if _modules_loaded:
+        return
+    import tools.applications  # noqa: F401
+    import tools.browser  # noqa: F401
+    import tools.clipboard  # noqa: F401
+    import tools.filesystem  # noqa: F401
+    import tools.system  # noqa: F401
+
+    _modules_loaded = True
+
+
+def _domain_tools() -> list[BaseTool]:
+    """Runtime-backed domain tools (registered explicitly)."""
     return [
-        OpenApplicationTool(),
-        CloseApplicationTool(),
-        SearchInstalledAppsTool(),
-        OpenWebsiteTool(),
-        LaunchUrlTool(),
-        SearchGoogleTool(),
-        CreateFolderTool(),
-        OpenFolderTool(),
-        SearchFilesTool(),
-        RenameFileTool(),
-        MoveFileTool(),
-        CopyFileTool(),
-        DeleteFileTool(),
-        GetTimeTool(),
-        LockScreenTool(),
-        ShutdownPcTool(),
-        RestartPcTool(),
-        SleepPcTool(),
-        ControlVolumeTool(),
-        ControlBrightnessTool(),
-        TakeScreenshotTool(),
-        ClipboardManagerTool(),
         RememberTool(),
         SetReminderTool(),
         ListRemindersTool(),
@@ -94,6 +63,12 @@ def _default_tools() -> list[BaseTool]:
         ListNotesTool(),
         QueryMemoryTool(),
     ]
+
+
+def _default_tools() -> list[BaseTool]:
+    _load_tool_modules()
+    discovered = [cls() for cls in registered_tool_classes()]
+    return discovered + _domain_tools()
 
 
 class ToolRegistry:
@@ -114,6 +89,10 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return sorted(self._tools.keys())
 
+    def list_tools(self) -> list[dict[str, Any]]:
+        """Return JSON-schema metadata for every registered tool."""
+        return self.schemas()
+
     def all_tools(self) -> list[BaseTool]:
         """Return registered tool instances for discovery / plugins."""
         return list(self._tools.values())
@@ -121,6 +100,20 @@ class ToolRegistry:
     def find_for_intent(self, intent: str) -> list[BaseTool]:
         """Return tools that claim they can handle *intent*."""
         return [tool for tool in self.all_tools() if tool.can_handle(intent)]
+
+    def find_by_intent_text(self, text: str) -> Optional[BaseTool]:
+        """Return the best-matching tool whose intent keywords appear in *text*."""
+        lowered = (text or "").lower()
+        matches: list[tuple[int, BaseTool]] = []
+        for tool in self.all_tools():
+            for keyword in tool.intent_keywords:
+                if keyword in lowered:
+                    matches.append((len(keyword), tool))
+                    break
+        if not matches:
+            return None
+        matches.sort(key=lambda item: item[0], reverse=True)
+        return matches[0][1]
 
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values()]
@@ -150,25 +143,33 @@ class ToolRegistry:
                 )
                 lines.append(f"  params: {param_desc}")
             lines.append(f"  required: {required}")
+            if schema.get("requires_confirmation"):
+                lines.append("  requires_confirmation: true")
         return "\n".join(lines)
 
     def execute(self, name: str, params: Mapping[str, Any] | None = None) -> ToolResult:
         action_name = name.lower().strip()
         tool = self.get(action_name)
         if tool is None:
+            _logger.warning("Unknown tool requested: %s", action_name)
             return ToolResult(False, f"Unknown action: {action_name}")
+
         payload = dict(params or {})
         try:
-            _logger.info("Executing tool=%s params=%s", action_name, list(payload.keys()))
-            result = tool.execute(payload)
             _logger.info(
-                "Tool %s finished success=%s",
+                "Executing tool=%s params=%s requires_confirmation=%s",
                 action_name,
-                result.success,
+                list(payload.keys()),
+                tool.requires_confirmation,
             )
+            result = tool.execute(payload)
+            if result.success:
+                _logger.info("Tool %s succeeded: %s", action_name, result.message)
+            else:
+                _logger.warning("Tool %s failed: %s", action_name, result.message)
             return result
         except Exception as exc:
-            _logger.exception("Tool %s failed", action_name)
+            _logger.exception("Tool %s raised an exception", action_name)
             return ToolResult(False, f"Failed to execute action {action_name}: {exc}")
 
 
@@ -183,6 +184,6 @@ def get_registry() -> ToolRegistry:
 
 
 def execute_tool(action_name: str, tool_data: dict | None = None) -> tuple[bool, str]:
-    """Backward-compatible entry point used by ``app.py``."""
+    """Backward-compatible entry point used by legacy callers."""
     result = get_registry().execute(action_name, tool_data)
     return result.as_tuple()

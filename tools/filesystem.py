@@ -7,6 +7,7 @@ import shutil
 from typing import Any, Mapping
 
 from tools.base import BaseTool, ToolParameter, ToolResult
+from tools.registration import register_tool
 
 
 def _resolve_path(path: str) -> str:
@@ -14,6 +15,7 @@ def _resolve_path(path: str) -> str:
     return os.path.abspath(expanded)
 
 
+@register_tool
 class CreateFolderTool(BaseTool):
     name = "create_folder"
     description = "Create a folder at the given path."
@@ -32,6 +34,7 @@ class CreateFolderTool(BaseTool):
             return ToolResult(False, f"Could not create folder: {exc}")
 
 
+@register_tool
 class OpenFolderTool(BaseTool):
     name = "open_folder"
     description = "Open a folder in File Explorer."
@@ -49,6 +52,7 @@ class OpenFolderTool(BaseTool):
         return ToolResult(True, f"Opening {path}.", {"path": path})
 
 
+@register_tool
 class SearchFilesTool(BaseTool):
     name = "search_files"
     description = "Search for files by name pattern under a directory."
@@ -89,6 +93,7 @@ class SearchFilesTool(BaseTool):
         )
 
 
+@register_tool
 class RenameFileTool(BaseTool):
     name = "rename_file"
     description = "Rename a file or folder."
@@ -112,6 +117,7 @@ class RenameFileTool(BaseTool):
             return ToolResult(False, f"Rename failed: {exc}")
 
 
+@register_tool
 class MoveFileTool(BaseTool):
     name = "move_file"
     description = "Move a file or folder to another location."
@@ -136,6 +142,7 @@ class MoveFileTool(BaseTool):
             return ToolResult(False, f"Move failed: {exc}")
 
 
+@register_tool
 class CopyFileTool(BaseTool):
     name = "copy_file"
     description = "Copy a file or folder to another location."
@@ -165,6 +172,7 @@ class CopyFileTool(BaseTool):
             return ToolResult(False, f"Copy failed: {exc}")
 
 
+@register_tool
 class DeleteFileTool(BaseTool):
     name = "delete_file"
     description = "Delete a file or folder."

@@ -7,58 +7,85 @@ from datetime import datetime
 from typing import Any, Mapping
 
 from tools.base import BaseTool, ToolParameter, ToolResult
-from tools.system_commands import (
-    get_current_time as _get_current_time,
-    lock_pc as _lock_pc,
-    restart_pc as _restart_pc,
-    shutdown_pc as _shutdown_pc,
-)
+from tools.registration import register_tool
 
 
+def lock_pc() -> None:
+    """Lock the workstation."""
+    os.system("rundll32.exe user32.dll,LockWorkStation")
+
+
+def shutdown_pc() -> None:
+    """Shut down the PC in 10 seconds."""
+    os.system("shutdown /s /t 10")
+
+
+def restart_pc() -> None:
+    """Restart the PC in 10 seconds."""
+    os.system("shutdown /r /t 10")
+
+
+def get_current_time() -> str:
+    """Return the current formatted system time."""
+    return datetime.now().strftime("%I:%M %p")
+
+
+@register_tool
 class GetTimeTool(BaseTool):
     name = "get_time"
     description = "Report the current system time."
-    parameters: tuple = ()
+    parameters: tuple[ToolParameter, ...] = ()
+    intent_keywords = ("time", "what time")
 
     def execute(self, params: Mapping[str, Any]) -> ToolResult:
-        current = _get_current_time()
+        current = get_current_time()
         return ToolResult(True, f"The current time is {current}.", {"time": current})
 
 
+@register_tool
 class LockScreenTool(BaseTool):
     name = "lock_pc"
     description = "Lock the Windows workstation."
-    parameters: tuple = ()
+    parameters: tuple[ToolParameter, ...] = ()
+    intent_keywords = ("lock",)
 
     def execute(self, params: Mapping[str, Any]) -> ToolResult:
-        _lock_pc()
+        lock_pc()
         return ToolResult(True, "Locking the computer.")
 
 
-class ShutdownPcTool(BaseTool):
+@register_tool
+class ShutdownTool(BaseTool):
     name = "shutdown_pc"
     description = "Shut down the computer after a short delay."
-    parameters: tuple = ()
+    parameters: tuple[ToolParameter, ...] = ()
+    requires_confirmation = True
+    intent_keywords = ("shutdown", "shut down")
 
     def execute(self, params: Mapping[str, Any]) -> ToolResult:
-        _shutdown_pc()
+        shutdown_pc()
         return ToolResult(True, "Shutting down the computer.")
 
 
-class RestartPcTool(BaseTool):
+@register_tool
+class RestartTool(BaseTool):
     name = "restart_pc"
     description = "Restart the computer after a short delay."
-    parameters: tuple = ()
+    parameters: tuple[ToolParameter, ...] = ()
+    requires_confirmation = True
+    intent_keywords = ("restart", "reboot")
 
     def execute(self, params: Mapping[str, Any]) -> ToolResult:
-        _restart_pc()
+        restart_pc()
         return ToolResult(True, "Restarting the computer.")
 
 
+@register_tool
 class SleepPcTool(BaseTool):
     name = "sleep_pc"
     description = "Put the computer to sleep."
-    parameters: tuple = ()
+    parameters: tuple[ToolParameter, ...] = ()
+    intent_keywords = ("sleep", "suspend")
 
     def execute(self, params: Mapping[str, Any]) -> ToolResult:
         try:
@@ -71,6 +98,7 @@ class SleepPcTool(BaseTool):
             return ToolResult(False, f"Could not sleep the PC: {exc}")
 
 
+@register_tool
 class ControlVolumeTool(BaseTool):
     name = "control_volume"
     description = "Set, raise, or lower the system master volume."
@@ -96,45 +124,48 @@ class ControlVolumeTool(BaseTool):
             return ToolResult(False, "Should I set, raise, lower, mute, or unmute volume?")
 
         try:
-            from ctypes import cast, POINTER
-            from comtypes import CLSCTX_ALL
-            from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-        except ImportError:
-            return ToolResult(
-                False,
-                "Volume control requires the pycaw package. Install with: pip install pycaw comtypes",
-            )
+            from tools.volume_control import VolumeController
+
+            volume = VolumeController()
+        except ImportError as exc:
+            return ToolResult(False, str(exc))
+        except Exception as exc:
+            return ToolResult(False, f"Volume control failed: {exc}")
 
         try:
-            devices = AudioUtilities.GetSpeakers()
-            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            volume = cast(interface, POINTER(IAudioEndpointVolume))
-            current = int(round(volume.GetMasterVolumeLevelScalar() * 100))
-
             if action == "mute":
-                volume.SetMute(1, None)
+                volume.mute()
                 return ToolResult(True, "Volume muted.")
             if action == "unmute":
-                volume.SetMute(0, None)
+                volume.unmute()
                 return ToolResult(True, "Volume unmuted.")
 
             step = int(params.get("step") or 10)
             if action == "up":
-                level = min(100, current + step)
-            elif action == "down":
-                level = max(0, current - step)
-            elif action == "set":
-                level = int(params.get("level", current))
-                level = max(0, min(100, level))
-            else:
-                return ToolResult(False, f"Unknown volume action: {action}")
+                level = volume.increase(step)
+                return ToolResult(
+                    True,
+                    f"Volume increased to {level} percent.",
+                    {"level": level},
+                )
+            if action == "down":
+                level = volume.decrease(step)
+                return ToolResult(
+                    True,
+                    f"Volume decreased to {level} percent.",
+                    {"level": level},
+                )
+            if action == "set":
+                current = volume.get_volume_percent()
+                level = volume.set_volume_percent(int(params.get("level", current)))
+                return ToolResult(True, f"Volume set to {level} percent.", {"level": level})
 
-            volume.SetMasterVolumeLevelScalar(level / 100.0, None)
-            return ToolResult(True, f"Volume set to {level} percent.", {"level": level})
+            return ToolResult(False, f"Unknown volume action: {action}")
         except Exception as exc:
             return ToolResult(False, f"Volume control failed: {exc}")
 
 
+@register_tool
 class ControlBrightnessTool(BaseTool):
     name = "control_brightness"
     description = "Set or adjust display brightness on supported Windows devices."
@@ -190,6 +221,7 @@ class ControlBrightnessTool(BaseTool):
             )
 
 
+@register_tool
 class TakeScreenshotTool(BaseTool):
     name = "take_screenshot"
     description = "Capture a screenshot and save it to the Pictures folder."
@@ -224,52 +256,3 @@ class TakeScreenshotTool(BaseTool):
             return ToolResult(True, f"Screenshot saved to {path}.", {"path": path})
         except Exception as exc:
             return ToolResult(False, f"Screenshot failed: {exc}")
-
-
-class ClipboardManagerTool(BaseTool):
-    name = "clipboard_manager"
-    description = "Read from or write to the system clipboard."
-    parameters = (
-        ToolParameter("action", "One of: read, write"),
-        ToolParameter("text", "Text to copy when action is write", required=False),
-    )
-
-    def execute(self, params: Mapping[str, Any]) -> ToolResult:
-        action = (params.get("action") or "").lower().strip()
-        if action == "read":
-            try:
-                import win32clipboard
-
-                win32clipboard.OpenClipboard()
-                try:
-                    if win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_UNICODETEXT):
-                        data = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
-                    else:
-                        data = ""
-                finally:
-                    win32clipboard.CloseClipboard()
-                if not data:
-                    return ToolResult(True, "The clipboard is empty.", {"text": ""})
-                preview = data[:200] + ("..." if len(data) > 200 else "")
-                return ToolResult(True, f"Clipboard contains: {preview}", {"text": data})
-            except Exception as exc:
-                return ToolResult(False, f"Could not read clipboard: {exc}")
-
-        if action == "write":
-            text = params.get("text")
-            if text is None:
-                return ToolResult(False, "What should I copy to the clipboard?")
-            try:
-                import win32clipboard
-
-                win32clipboard.OpenClipboard()
-                try:
-                    win32clipboard.EmptyClipboard()
-                    win32clipboard.SetClipboardText(str(text))
-                finally:
-                    win32clipboard.CloseClipboard()
-                return ToolResult(True, "Copied to clipboard.", {"text": str(text)})
-            except Exception as exc:
-                return ToolResult(False, f"Could not write clipboard: {exc}")
-
-        return ToolResult(False, "Clipboard action must be read or write.")

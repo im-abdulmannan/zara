@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping
 
 
 @dataclass(frozen=True)
@@ -35,6 +35,8 @@ class BaseTool(ABC):
     name: str
     description: str
     parameters: tuple[ToolParameter, ...] = ()
+    requires_confirmation: bool = False
+    intent_keywords: ClassVar[tuple[str, ...]] = ()
 
     @abstractmethod
     def execute(self, params: Mapping[str, Any]) -> ToolResult:
@@ -56,6 +58,7 @@ class BaseTool(ABC):
             "description": self.description,
             "parameters": props,
             "required": required,
+            "requires_confirmation": self.requires_confirmation,
         }
 
     def prompt_example(self) -> str:
@@ -70,3 +73,8 @@ class BaseTool(ABC):
         """Return True when this tool should handle *intent* (override in subclasses)."""
         normalized = (intent or "").lower().strip().replace(" ", "_")
         return normalized == self.name.lower()
+
+    def matches_intent_text(self, text: str) -> bool:
+        """Return True when *text* contains a registered intent keyword."""
+        lowered = (text or "").lower()
+        return any(keyword in lowered for keyword in self.intent_keywords)

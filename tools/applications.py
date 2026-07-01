@@ -5,25 +5,59 @@ import os
 import subprocess
 from typing import Any, Mapping
 
-from tools.apps import open_app as _open_app
 from tools.base import BaseTool, ToolParameter, ToolResult
+from tools.registration import register_tool
+
+# Known application aliases → (launch command, display name)
+_APP_LAUNCHERS: dict[str, tuple[str, str]] = {
+    "chrome": ("start chrome", "Chrome"),
+    "google chrome": ("start chrome", "Chrome"),
+    "vscode": ("code", "VS Code"),
+    "vs code": ("code", "VS Code"),
+    "visual studio code": ("code", "VS Code"),
+    "notepad": ("start notepad", "Notepad"),
+    "editor": ("start notepad", "Notepad"),
+    "calculator": ("start calc", "Calculator"),
+    "calc": ("start calc", "Calculator"),
+}
 
 
+def launch_application(app_name: str) -> tuple[bool, str]:
+    """Launch a local Windows application. Returns ``(success, display_name)``."""
+    normalized = app_name.lower().strip()
+    if not normalized:
+        return False, ""
+
+    launcher, display = _APP_LAUNCHERS.get(
+        normalized,
+        (f"start {normalized}", app_name.strip()),
+    )
+    try:
+        os.system(launcher)
+        return True, display
+    except OSError:
+        return False, display
+
+
+@register_tool
 class OpenApplicationTool(BaseTool):
     name = "open_app"
-    description = "Open a local application on Windows."
+    description = "Open an installed application on Windows."
     parameters = (
         ToolParameter("app", "Application name, e.g. chrome, vscode, notepad"),
     )
 
     def execute(self, params: Mapping[str, Any]) -> ToolResult:
-        app = (params.get("app") or "").strip()
+        app = (params.get("app") or params.get("app_name") or "").strip()
         if not app:
             return ToolResult(False, "Which application would you like to open?")
-        _, display = _open_app(app)
+        success, display = launch_application(app)
+        if not success:
+            return ToolResult(False, f"Could not open {display}.")
         return ToolResult(True, f"Opening {display}.", {"app": display})
 
 
+@register_tool
 class CloseApplicationTool(BaseTool):
     name = "close_app"
     description = "Close an application by process name or window title."
@@ -47,6 +81,7 @@ class CloseApplicationTool(BaseTool):
             return ToolResult(False, f"Could not close {app}: {exc}")
 
 
+@register_tool
 class SearchInstalledAppsTool(BaseTool):
     name = "search_installed_apps"
     description = "Search Start Menu shortcuts for installed applications."
@@ -60,8 +95,20 @@ class SearchInstalledAppsTool(BaseTool):
             return ToolResult(False, "What application should I search for?")
 
         roots = [
-            os.path.join(os.environ.get("ProgramData", ""), "Microsoft", "Windows", "Start Menu", "Programs"),
-            os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs"),
+            os.path.join(
+                os.environ.get("ProgramData", ""),
+                "Microsoft",
+                "Windows",
+                "Start Menu",
+                "Programs",
+            ),
+            os.path.join(
+                os.environ.get("APPDATA", ""),
+                "Microsoft",
+                "Windows",
+                "Start Menu",
+                "Programs",
+            ),
         ]
         matches: list[str] = []
         for root in roots:

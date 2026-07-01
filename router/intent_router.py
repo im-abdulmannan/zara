@@ -208,15 +208,12 @@ def _route_web_search(user_text: str, entities: Mapping[str, Any]) -> Optional[d
 
 
 def _route_system_command(user_text: str, entities: Mapping[str, Any]) -> Optional[dict]:
+    from tools.registry import get_registry
+
     command = (_entity_str(entities, "command") or user_text).lower()
-    if "shutdown" in command or "shut down" in command:
-        return {"tool": "shutdown_pc"}
-    if "restart" in command or "reboot" in command:
-        return {"tool": "restart_pc"}
-    if "lock" in command:
-        return {"tool": "lock_pc"}
-    if "time" in command:
-        return {"tool": "get_time"}
+    tool = get_registry().find_by_intent_text(command)
+    if tool is not None:
+        return {"tool": tool.name}
     return None
 
 
