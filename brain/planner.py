@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from brain.agent import ask_agent
+from agent import ask_agent
 from core.logging_config import get_logger
 from core.session import Session
 from tools.executor import (
