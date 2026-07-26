@@ -72,3 +72,20 @@ def test_sleep_phrase_containing_name_is_not_wake(detector):
 def test_extract_command_after_wake(detector):
     assert detector.extract_command_after_wake("hey zara, how are you?") == "how are you"
     assert detector.extract_command_after_wake("hey zara") == ""
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "aizara, how are you?",
+        "aizara how are you aizara how are you",
+        "heyzara",
+        "hey zaara",
+    ],
+)
+def test_wake_tolerates_whisper_mishearings(detector, text):
+    assert detector.is_wake(text) is True
+
+
+def test_extract_command_from_misheard_wake(detector):
+    assert detector.extract_command_after_wake("aizara, how are you?") == "how are you"

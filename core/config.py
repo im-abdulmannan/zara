@@ -53,7 +53,7 @@ class AssistantConfig:
     streaming_wake_threshold: float = 0.8
     streaming_wake_models: Tuple[str, ...] = ()
     # Pause after "I'm listening" so TTS/echo is not captured as the command.
-    post_wake_listen_delay_sec: float = 0.45
+    post_wake_listen_delay_sec: float = 0.8
 
     # Behaviour — after wake, stay in a multi-turn session until sleep or idle timeout.
     play_wake_acknowledgement: bool = True
@@ -97,7 +97,7 @@ class AssistantConfig:
             wake_phrases=tuple(wake_phrases),
             use_streaming_wake=_env_bool("USE_STREAMING_WAKE", False),
             streaming_wake_threshold=_env_float("STREAMING_WAKE_THRESHOLD", 0.8),
-            post_wake_listen_delay_sec=_env_float("POST_WAKE_LISTEN_DELAY", 0.45),
+            post_wake_listen_delay_sec=_env_float("POST_WAKE_LISTEN_DELAY", 0.8),
             play_wake_acknowledgement=_env_bool("PLAY_WAKE_ACK", True),
             wake_acknowledgement_text=os.getenv(
                 "WAKE_ACK_TEXT", "I'm listening."

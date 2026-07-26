@@ -43,6 +43,10 @@ class WhisperTranscriber:
         segments, _info = self._get_model().transcribe(
             samples,
             language=self.language,
+            # Bias short wake utterances toward the assistant name.
+            initial_prompt="Hey Zara. Hello Zara. Okay Zara.",
+            condition_on_previous_text=False,
+            vad_filter=True,
         )
         text = " ".join(segment.text for segment in segments).strip()
         return text.lower()

@@ -9,6 +9,7 @@ from core.llm_config import (
     DEFAULT_OPENROUTER_URL,
     LlmConnection,
     connection_from_env,
+    preset_by_id,
 )
 from intent.config import IntentConfig
 from intent import classify_intent
@@ -190,31 +191,12 @@ def build_system_prompt() -> str:
     )
 
 
-# Prefer the free-model router only when talking to OpenRouter.
-MODEL_FALLBACKS = [
-    "openrouter/free",
-    "openai/gpt-oss-20b:free",
-    "google/gemma-4-31b-it:free",
-    "google/gemma-4-26b-a4b-it:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-]
-
-
-def _uses_openrouter() -> bool:
-    return "openrouter.ai" in get_active_base_url()
-
-
-def _model_chain() -> list[str]:
-    """Primary model, then OpenRouter fallbacks when applicable."""
-    chain: list[str] = []
-    seen: set[str] = set()
-    primary = get_active_model()
-    extras = MODEL_FALLBACKS if _uses_openrouter() else []
-    for model in ([primary] if primary else []) + extras:
-        if model and model not in seen:
-            seen.add(model)
-            chain.append(model)
-    return chain
+def _normalize_model_id(model: str) -> str:
+    """Strip Google ``models/`` prefixes so OpenAI-compatible calls stay valid."""
+    mid = (model or "").strip()
+    if mid.startswith("models/"):
+        mid = mid[len("models/") :]
+    return mid
 
 
 def _is_rate_limited(exc: Exception) -> bool:
@@ -223,37 +205,47 @@ def _is_rate_limited(exc: Exception) -> bool:
     return isinstance(exc, APIStatusError) and exc.status_code == 429
 
 
-def _log_model_failure(model: str, exc: Exception) -> None:
+def _cloud_credentials_ok() -> tuple[bool, str]:
+    """Return (ok, spoken_hint) for whether the active LLM can be called."""
+    key = (_active.api_key or "").strip()
+    base = get_active_base_url()
+    preset = preset_by_id(_active.provider_id)
+    if key:
+        return True, ""
+    if preset and preset.allow_empty_key:
+        return True, ""
+    if "localhost" in base or "127.0.0.1" in base:
+        return True, ""
+    label = _active.label or "your provider"
+    return (
+        False,
+        f"I need an API key for {label}. Open the Provider tab, paste the key, "
+        "pick a model, and save.",
+    )
+
+
+def _chat_json(message: str) -> str:
+    return json.dumps({"tool": "chat", "response": message})
+
+
+def _failure_message(model: str, exc: Exception) -> str:
+    """Transparent spoken error — user decides next steps in the Provider UI."""
+    label = _active.label or "provider"
     if _is_rate_limited(exc):
-        print(f"{model} rate limited (429), trying next model...")
-    else:
-        print(f"{model} failed: {exc}")
+        return (
+            f"{label} model {model} is rate limited right now. "
+            "Open the Provider tab and choose a different model, or try again later."
+        )
+    detail = str(exc).strip()
+    if len(detail) > 180:
+        detail = detail[:177] + "..."
+    return (
+        f"I could not use {label} model {model}. {detail} "
+        "Open the Provider tab to change the provider, API key, or model."
+    )
 
 
 conversation = load_history()
-
-LOCAL_OFFLINE_SERVERS = [
-    ("http://localhost:11434/v1", "qwen2.5-coder:latest"),
-    ("http://localhost:11434/v1", "llama3.2:latest"),
-    ("http://localhost:1234/v1", "local-model"),
-]
-
-
-def _try_local_offline_llm(messages: list[dict]) -> str | None:
-    """Fallback to local offline LLM server when cloud fails."""
-    for base_url, model in LOCAL_OFFLINE_SERVERS:
-        try:
-            local_client = OpenAI(base_url=base_url, api_key="ollama", timeout=4.0)
-            resp = local_client.chat.completions.create(
-                model=model,
-                messages=messages,
-            )
-            if resp.choices and resp.choices[0].message.content:
-                print(f"Offline local LLM ({model} @ {base_url}) responded.")
-                return resp.choices[0].message.content
-        except Exception:
-            continue
-    return None
 
 
 def ask_agent(user_text):
@@ -302,25 +294,37 @@ def ask_agent(user_text):
 
     messages.extend(conversation[-20:])
 
-    reply = None
-    for model in _model_chain():
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
+    ok, credential_hint = _cloud_credentials_ok()
+    if not ok:
+        print(f"LLM credentials missing: {get_active_connection_summary()}")
+        reply = _chat_json(credential_hint)
+        conversation.append({"role": "assistant", "content": reply})
+        save_history(conversation)
+        return reply
+
+    model = _normalize_model_id(get_active_model() or "")
+    if not model:
+        reply = _chat_json(
+            "No model is selected. Open the Provider tab, pick a model, and save."
+        )
+        conversation.append({"role": "assistant", "content": reply})
+        save_history(conversation)
+        return reply
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+        )
+        reply = (response.choices[0].message.content if response.choices else None) or ""
+        if not reply.strip():
+            reply = _chat_json(
+                f"{_active.label} model {model} returned an empty reply. "
+                "Open the Provider tab to pick another model."
             )
-            reply = response.choices[0].message.content
-            if reply:
-                break
-        except Exception as exc:
-            _log_model_failure(model, exc)
-            continue
-
-    if reply is None:
-        reply = _try_local_offline_llm(messages)
-
-    if reply is None:
-        raise RuntimeError("All models (cloud and offline local fallbacks) failed.")
+    except Exception as exc:
+        print(f"LLM call failed for {model} @ {get_active_base_url()}: {exc}")
+        reply = _chat_json(_failure_message(model, exc))
 
     conversation.append({
         "role": "assistant",

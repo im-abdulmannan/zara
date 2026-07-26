@@ -216,6 +216,7 @@ class VoiceOrchestrator:
         )
 
         if not self.wake_detector.is_wake(transcript):
+            _logger.info("Wake STT heard (no match): %r", transcript)
             self.state.reset(reason="no_wake_match")
             return False
 
@@ -239,7 +240,8 @@ class VoiceOrchestrator:
         # Skip spoken ack when the user already gave a command with the wake phrase.
         if self.config.play_wake_acknowledgement and not self._pending_command:
             self._speak_safe(self.config.wake_acknowledgement_text)
-            delay = float(getattr(self.config, "post_wake_listen_delay_sec", 0.45) or 0.0)
+            # Longer pause so TTS/echo is less likely to become an empty command capture.
+            delay = float(getattr(self.config, "post_wake_listen_delay_sec", 0.8) or 0.0)
             if delay > 0:
                 time.sleep(delay)
         return True

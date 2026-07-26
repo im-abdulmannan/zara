@@ -64,12 +64,13 @@ class Planner:
 
         try:
             raw = ask_agent(user_text)
-        except Exception:
+        except Exception as exc:
             _logger.exception("LLM pipeline failed")
+            spoken = str(exc).strip() if isinstance(exc, RuntimeError) else ""
             return PlannerResult(
                 raw_agent_response="",
                 payload={},
-                spoken_text="Sorry, I had trouble thinking about that.",
+                spoken_text=spoken or "Sorry, I had trouble thinking about that.",
                 elapsed_sec=time.monotonic() - started,
             )
 

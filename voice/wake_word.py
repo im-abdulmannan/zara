@@ -13,12 +13,32 @@ _logger = get_logger(__name__)
 
 _PUNCT_RE = re.compile(r"[^\w\s']+")
 
+# Common Whisper merges / mishearings of "Hey Zara" / "Zara".
+_STT_WAKE_FIXES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\baizara\b"), "hey zara"),
+    (re.compile(r"\bheyzara\b"), "hey zara"),
+    (re.compile(r"\bheyzaara\b"), "hey zara"),
+    (re.compile(r"\bhey\s*za+ra\b"), "hey zara"),
+    (re.compile(r"\bazara\b"), "zara"),
+    (re.compile(r"\bzahra\b"), "zara"),
+    (re.compile(r"\bzarah\b"), "zara"),
+    (re.compile(r"\ba\s+zara\b"), "hey zara"),
+)
+
 
 def _normalize_utterance(text: str) -> str:
     cleaned = (text or "").lower().strip()
     cleaned = cleaned.replace("\u2019", "'").replace("\u2018", "'")
     cleaned = _PUNCT_RE.sub(" ", cleaned)
     return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def soften_stt_wake_text(text: str) -> str:
+    """Rewrite common STT mishearings so wake phrases can match."""
+    normalized = _normalize_utterance(text)
+    for pattern, replacement in _STT_WAKE_FIXES:
+        normalized = pattern.sub(replacement, normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 @dataclass
@@ -65,21 +85,26 @@ class WakeWordDetector:
         """Return True when *text* matches a wake phrase (and is not a sleep command)."""
         if self.is_sleep(text):
             return False
-        matched = self._matches_phrase(text, self.phrases, short_token_exact=True)
+        softened = soften_stt_wake_text(text)
+        matched = self._matches_phrase(softened, self.phrases, short_token_exact=True)
         if matched:
-            _logger.info("Wake word detected in: %r", text)
+            _logger.info("Wake word detected in: %r (softened=%r)", text, softened)
         return matched
 
     def is_sleep(self, text: str) -> bool:
         """Return True when *text* contains a sleep phrase."""
-        return self._matches_phrase(text, self.sleep_phrases, short_token_exact=False)
+        return self._matches_phrase(
+            soften_stt_wake_text(text),
+            self.sleep_phrases,
+            short_token_exact=False,
+        )
 
     def extract_command_after_wake(self, text: str) -> str:
         """Return residual command after a wake phrase, else empty string.
 
         Example: ``hey zara, how are you?`` → ``how are you``.
         """
-        normalized = _normalize_utterance(text)
+        normalized = soften_stt_wake_text(text)
         if not normalized:
             return ""
         # Prefer longer phrases first so "hey zara" wins over bare "zara".
@@ -96,6 +121,10 @@ class WakeWordDetector:
             if not match:
                 continue
             remainder = (match.group(1) or "").strip(" .,!?;:")
+            # Collapse duplicated STT echoes: "how are you? how are you?"
+            parts = [p.strip() for p in re.split(r"[.!?]+", remainder) if p.strip()]
+            if len(parts) >= 2 and len(set(parts)) == 1:
+                return parts[0]
             return remainder
         return ""
 
