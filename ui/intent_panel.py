@@ -20,15 +20,15 @@ from PySide6.QtWidgets import (
 
 from agent import apply_llm_connection
 from core.llm_config import (
-    INTENT_MODEL_CHOICES,
     LlmConnection,
     PROVIDER_PRESETS,
     connection_from_env,
-    connection_to_env_updates,
     fetch_remote_models,
+    intent_fetch_base_url,
+    models_for_intent,
     preset_by_id,
+    save_connection,
 )
-from ui.env_settings import upsert_env_values
 from ui.model_grid import ModelGrid
 
 
@@ -262,13 +262,16 @@ class IntentPanel(QWidget):
         is_openai = backend == "openai"
         self.provider_combo.setVisible(is_openai)
         self.base_url_input.setVisible(is_openai)
-        self.fetch_models_btn.setVisible(is_openai)
+        self.fetch_models_btn.setVisible(True)
         if self._provider_label is not None:
             self._provider_label.setVisible(is_openai)
         if self._base_url_label is not None:
             self._base_url_label.setVisible(is_openai)
         if backend == "gemini":
-            self.api_key_input.setPlaceholderText("Gemini API key")
+            preset = preset_by_id("gemini")
+            self.api_key_input.setPlaceholderText(
+                preset.api_key_placeholder if preset else "Gemini API key"
+            )
         else:
             preset = preset_by_id(str(self.provider_combo.currentData() or "custom"))
             self.api_key_input.setPlaceholderText(
@@ -295,6 +298,12 @@ class IntentPanel(QWidget):
         if self._building:
             return
         backend = str(self.backend_combo.currentData() or "gemini")
+        if backend == "gemini":
+            gemini = preset_by_id("gemini")
+            if gemini and gemini.base_url and not self.base_url_input.text().strip():
+                self.base_url_input.setText(gemini.base_url)
+        self._selected_model = ""
+        self.manual_model_input.clear()
         self._sync_models(backend)
         self._refresh_visibility()
         self._update_status()
@@ -313,6 +322,8 @@ class IntentPanel(QWidget):
         if preset.default_api_key and not self.api_key_input.text().strip():
             self.api_key_input.setText(preset.default_api_key)
         self.api_key_input.setPlaceholderText(preset.api_key_placeholder)
+        self._selected_model = ""
+        self.manual_model_input.clear()
         self._sync_models("openai", provider_id=provider_id)
         self._update_status()
 
@@ -322,20 +333,21 @@ class IntentPanel(QWidget):
         prefer: str | None = None,
         provider_id: str | None = None,
     ) -> None:
-        if backend == "gemini":
-            models = list(INTENT_MODEL_CHOICES)
-        else:
-            preset = preset_by_id(provider_id or str(self.provider_combo.currentData() or ""))
-            models = list(preset.models) if preset else []
+        # No preset catalog — only keep a previously saved selection until fetch.
         selected = (prefer or self._selected_model or "").strip()
-        if selected and selected not in models:
-            models.insert(0, selected)
-        self._all_models = models
-        self._selected_model = selected or (models[0] if models else "")
+        self._all_models = models_for_intent(
+            backend=backend,
+            intent_provider_id=provider_id
+            or str(self.provider_combo.currentData() or ""),
+            selected_model=selected,
+        )
+        self._selected_model = selected
         self.manual_model_input.setText(self._selected_model)
         self.model_grid.set_free_only(self.free_only_check.isChecked())
         self.model_grid.set_models(self._all_models, selected=self._selected_model)
         self.selected_label.setText(f"Selected intent model: {self._selected_model or '—'}")
+        if not self._all_models:
+            self.status_label.setText("Paste an API key, then click Fetch models.")
 
     def _on_free_filter(self, checked: bool) -> None:
         self.model_grid.set_free_only(checked)
@@ -379,7 +391,7 @@ class IntentPanel(QWidget):
 
     def _save_enabled_only(self) -> None:
         connection = self._build_connection(enabled=self._enabled)
-        upsert_env_values(connection_to_env_updates(connection))
+        save_connection(connection)
         apply_llm_connection(connection)
         self.connection_saved.emit()
         if not self._enabled:
@@ -411,21 +423,32 @@ class IntentPanel(QWidget):
             if not allow_empty:
                 QMessageBox.warning(self, "Missing API key", "Paste an API key for intent.")
                 return
-        upsert_env_values(connection_to_env_updates(connection))
+        save_connection(connection)
         apply_llm_connection(connection)
         self._update_status()
         self.connection_saved.emit()
-        QMessageBox.information(self, "Saved", "Intent settings saved to .env and applied.")
+        QMessageBox.information(
+            self,
+            "Saved",
+            "Intent settings saved locally (user_settings.json) and applied.",
+        )
 
     def _fetch_models(self) -> None:
-        if str(self.backend_combo.currentData() or "") != "openai":
-            return
         if self._worker is not None:
             return
-        base_url = self.base_url_input.text().strip()
+        backend = str(self.backend_combo.currentData() or "gemini")
+        provider_id = str(self.provider_combo.currentData() or "")
+        base_url = intent_fetch_base_url(
+            backend=backend,
+            intent_provider_id=provider_id,
+            intent_base_url=self.base_url_input.text(),
+        )
         api_key = self.api_key_input.text().strip()
         if not base_url:
             QMessageBox.warning(self, "Missing Base URL", "Enter an intent Base URL first.")
+            return
+        if backend == "gemini" and not api_key:
+            QMessageBox.warning(self, "Missing API key", "Paste a Gemini API key first.")
             return
         self.status_label.setText("Fetching intent models...")
         self.fetch_models_btn.setEnabled(False)

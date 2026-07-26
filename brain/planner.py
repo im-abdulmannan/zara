@@ -79,11 +79,27 @@ class Planner:
         try:
             payload = parse_agent_payload(raw)
         except Exception:
-            _logger.exception("Failed to parse agent JSON")
+            cleaned = (raw or "").strip()
+            if not cleaned:
+                _logger.warning("Agent returned empty response")
+                return PlannerResult(
+                    raw_agent_response=raw,
+                    payload={},
+                    spoken_text=(
+                        "The model returned an empty reply. "
+                        "Try again, or pick a different model in the Provider tab."
+                    ),
+                    elapsed_sec=time.monotonic() - started,
+                )
+            # Free / weaker models often return prose instead of JSON — speak it.
+            _logger.warning(
+                "Failed to parse agent JSON; treating as chat. Preview=%r",
+                cleaned[:160],
+            )
             return PlannerResult(
                 raw_agent_response=raw,
-                payload={},
-                spoken_text="I didn't understand my own response.",
+                payload={"tool": "chat", "response": cleaned},
+                spoken_text=cleaned,
                 elapsed_sec=time.monotonic() - started,
             )
 

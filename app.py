@@ -78,11 +78,9 @@ def main() -> None:
             f"Continuous Mode: {'ON' if enabled else 'OFF'}"
         )
         try:
-            from ui.env_settings import upsert_env_values
+            from core.user_settings import set_app_preferences
 
-            upsert_env_values(
-                {"CONTINUOUS_CONVERSATION": "true" if enabled else "false"}
-            )
+            set_app_preferences(continuous_conversation=bool(enabled))
         except Exception as exc:
             _logger.warning("Failed to persist continuous mode: %s", exc)
         _logger.info("Continuous mode toggled via tray: %s", enabled)

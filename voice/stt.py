@@ -40,13 +40,17 @@ class WhisperTranscriber:
 
         # faster-whisper expects float32 samples in [-1, 1].
         samples = audio.astype(np.float32) / np.iinfo(np.int16).max
+        # WebRTC VAD already gated the capture — Whisper's vad_filter often
+        # drops short/quiet command clips as empty transcripts.
+        duration_sec = float(samples.size) / float(self.config.sample_rate)
         segments, _info = self._get_model().transcribe(
             samples,
             language=self.language,
             # Bias short wake utterances toward the assistant name.
             initial_prompt="Hey Zara. Hello Zara. Okay Zara.",
             condition_on_previous_text=False,
-            vad_filter=True,
+            vad_filter=duration_sec >= 4.0,
+            no_speech_threshold=0.6,
         )
         text = " ".join(segment.text for segment in segments).strip()
         return text.lower()

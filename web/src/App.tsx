@@ -18,7 +18,6 @@ export default function App() {
     active_model: "",
   });
   const [presets, setPresets] = useState<ProviderPreset[]>([]);
-  const [intentModels, setIntentModels] = useState<string[]>([]);
   const [connection, setConnection] = useState<Connection | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -30,7 +29,6 @@ export default function App() {
         const [providers, conn] = await Promise.all([api.providers(), api.connection()]);
         if (cancelled) return;
         setPresets(providers.presets);
-        setIntentModels(providers.intent_models);
         setConnection(conn);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -110,7 +108,6 @@ export default function App() {
         {tab === "intent" && connection ? (
           <IntentTab
             presets={presets}
-            intentModels={intentModels}
             connection={connection}
             busy={busy}
             setBusy={setBusy}
@@ -427,7 +424,6 @@ function ProviderTab({
 
 function IntentTab({
   presets,
-  intentModels,
   connection,
   busy,
   setBusy,
@@ -435,7 +431,6 @@ function IntentTab({
   onSaved,
 }: {
   presets: ProviderPreset[];
-  intentModels: string[];
   connection: Connection;
   busy: boolean;
   setBusy: (v: boolean) => void;
@@ -444,48 +439,74 @@ function IntentTab({
 }) {
   const [enabled, setEnabled] = useState(connection.intent_enabled);
   const [backend, setBackend] = useState(connection.intent_backend || "gemini");
-  const [providerId, setProviderId] = useState(connection.intent_provider_id || "openrouter");
-  const [baseUrl, setBaseUrl] = useState(connection.intent_base_url || "");
-  const [apiKey, setApiKey] = useState(connection.intent_api_key || "");
+  const [providerId, setProviderId] = useState(
+    connection.intent_provider_id || connection.provider_id || "openrouter",
+  );
+  const [baseUrl, setBaseUrl] = useState(
+    connection.intent_base_url || connection.base_url || "",
+  );
+  const [apiKey, setApiKey] = useState(
+    connection.intent_api_key || connection.api_key || "",
+  );
   const [confidence, setConfidence] = useState(connection.intent_confidence);
-  const [model, setModel] = useState(connection.intent_model);
+  const [model, setModel] = useState(connection.intent_model || "");
   const [models, setModels] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
   const [freeOnly, setFreeOnly] = useState(false);
-  const [manual, setManual] = useState(connection.intent_model);
+  const [manual, setManual] = useState(connection.intent_model || "");
   const [message, setMessage] = useState("");
 
+  const geminiPreset = presets.find((p) => p.id === "gemini");
+  const intentPreset = presets.find((p) => p.id === providerId);
+  const fetchUrl =
+    backend === "gemini"
+      ? (baseUrl.trim() || geminiPreset?.base_url || "").trim()
+      : baseUrl.trim();
+  const keyRequired = backend === "gemini"
+    ? true
+    : !intentPreset?.allow_empty_key;
+  const keyReady = !keyRequired || Boolean(apiKey.trim());
+
   useEffect(() => {
-    // Gemini: known model ids. OpenAI-compatible: auto-fetch live catalog.
-    if (backend === "gemini") {
-      const list = [...intentModels];
-      if (model && !list.includes(model)) list.unshift(model);
-      setModels(list);
-      return;
-    }
-    const url = baseUrl.trim();
-    if (!url || !enabled) {
+    if (!enabled || !keyReady || !fetchUrl) {
       setModels([]);
       return;
     }
+
     let cancelled = false;
-    setMessage("Loading intent models...");
-    api
-      .fetchModels(url, apiKey)
-      .then((result) => {
-        if (cancelled) return;
-        setModels(result.models);
-        setMessage(`Loaded ${result.models.length} intent models.`);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setModels([]);
-        setMessage(err instanceof Error ? err.message : String(err));
-      });
+    const timer = window.setTimeout(() => {
+      setLoadingModels(true);
+      setMessage("Fetching models with your API key…");
+      api
+        .fetchModels(fetchUrl, apiKey)
+        .then((result) => {
+          if (cancelled) return;
+          const next = [...result.models];
+          const selected = model.trim();
+          if (selected && !next.includes(selected)) next.unshift(selected);
+          setModels(next);
+          setMessage(
+            result.models.length
+              ? `Loaded ${result.models.length} models. Pick one and save.`
+              : "No models returned. Check the API key.",
+          );
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setModels([]);
+          setMessage(err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => {
+          if (!cancelled) setLoadingModels(false);
+        });
+    }, 450);
+
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend, providerId, baseUrl, enabled, intentModels, Boolean(apiKey.trim())]);
+  }, [backend, providerId, fetchUrl, enabled, keyReady, apiKey]);
 
   const visible = freeOnly ? models.filter(isFreeModel) : models;
 
@@ -497,7 +518,7 @@ function IntentTab({
         intent_enabled: nextEnabled,
         intent_backend: backend,
         intent_provider_id: providerId,
-        intent_base_url: baseUrl,
+        intent_base_url: backend === "gemini" ? fetchUrl : baseUrl,
         intent_api_key: apiKey,
         intent_model: model,
         intent_confidence: confidence,
@@ -509,7 +530,7 @@ function IntentTab({
         nextEnabled
           ? withDetails
             ? "Intent details saved."
-            : "Intent enabled. Fill details and save."
+            : "Intent enabled. Paste an API key to load models."
           : "Intent disabled.",
       );
     } catch (err) {
@@ -520,17 +541,23 @@ function IntentTab({
   }
 
   async function fetchModels() {
-    if (backend !== "openai") return;
+    if (!fetchUrl) {
+      setError("Base URL is required to fetch models.");
+      return;
+    }
     setBusy(true);
+    setLoadingModels(true);
     setError("");
     try {
-      const result = await api.fetchModels(baseUrl, apiKey);
+      const result = await api.fetchModels(fetchUrl, apiKey);
       setModels(result.models);
       setMessage(`Loaded ${result.models.length} intent models.`);
     } catch (err) {
+      setModels([]);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+      setLoadingModels(false);
     }
   }
 
@@ -579,14 +606,48 @@ function IntentTab({
             Disable
           </button>
         </div>
-        <p>Configure the classifier, then save. Low-confidence requests still fall back to chat.</p>
+        <p>
+          Paste an API key, fetch live models, then save. No preset model list.
+          Low-confidence requests still fall back to chat.
+        </p>
       </div>
 
       <section className="section">
-        <p className="section-title">Connection</p>
+        <div className="row push">
+          <p className="section-title">Connection</p>
+          <button
+            className="btn linkish"
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setBackend("openai");
+              setProviderId(connection.provider_id);
+              setBaseUrl(connection.base_url);
+              setApiKey(connection.api_key);
+              setModel("");
+              setManual("");
+              setModels([]);
+              setMessage("Copied your main Provider endpoint. Models will load from the key.");
+            }}
+          >
+            Use my main LLM
+          </button>
+        </div>
         <div className="field">
           <label>Backend</label>
-          <select value={backend} onChange={(e) => setBackend(e.target.value)}>
+          <select
+            value={backend}
+            onChange={(e) => {
+              const next = e.target.value;
+              setBackend(next);
+              setModels([]);
+              setModel("");
+              setManual("");
+              if (next === "gemini" && geminiPreset?.base_url) {
+                setBaseUrl(geminiPreset.base_url);
+              }
+            }}
+          >
             <option value="gemini">Gemini (Google AI)</option>
             <option value="openai">Any OpenAI-compatible LLM</option>
           </select>
@@ -601,8 +662,14 @@ function IntentTab({
                 onChange={(e) => {
                   const id = e.target.value;
                   setProviderId(id);
+                  setModels([]);
+                  setModel("");
+                  setManual("");
                   const preset = presets.find((p) => p.id === id);
                   if (preset?.base_url) setBaseUrl(preset.base_url);
+                  if (id !== connection.intent_provider_id) {
+                    setApiKey(preset?.default_api_key || "");
+                  }
                 }}
               >
                 {presets.map((p) => (
@@ -620,12 +687,17 @@ function IntentTab({
         ) : null}
 
         <div className="field">
-          <label>API key</label>
+          <label>API key {keyRequired ? "" : "(optional for local)"}</label>
           <input
             type="password"
             value={apiKey}
+            autoComplete="off"
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder={backend === "gemini" ? "Gemini API key" : "API key"}
+            placeholder={
+              backend === "gemini"
+                ? geminiPreset?.api_key_placeholder || "Gemini API key"
+                : intentPreset?.api_key_placeholder || "API key"
+            }
           />
         </div>
 
@@ -642,70 +714,85 @@ function IntentTab({
         </div>
       </section>
 
-      <section className="section">
-        <div className="row push">
-          <p className="section-title">Intent model</p>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={freeOnly}
-              onChange={(e) => setFreeOnly(e.target.checked)}
-            />
-            Free only
-          </label>
+      {!keyReady ? (
+        <div className="gate">
+          <p>
+            Paste your API key. Matching Intent models will load automatically — nothing is
+            pre-listed.
+          </p>
         </div>
-
-        <div className="selected-pill">
-          Selected <b>{model || "none yet"}</b>
-        </div>
-
-        <div className="field">
-          <label>Or type a model ID</label>
-          <input
-            value={manual}
-            onChange={(e) => {
-              setManual(e.target.value);
-              setModel(e.target.value.trim());
-            }}
-          />
-        </div>
-
-        {visible.length ? (
-          <div className="model-grid">
-            {visible.map((id) => (
-              <button
-                key={id}
-                type="button"
-                className={`model-card ${model === id ? "selected" : ""}`}
-                onClick={() => {
-                  setModel(id);
-                  setManual(id);
-                }}
-              >
-                <strong>{id}</strong>
-                <span className={isFreeModel(id) ? "free" : ""}>
-                  {isFreeModel(id) ? "FREE" : "MODEL"}
-                </span>
-              </button>
-            ))}
+      ) : (
+        <section className="section">
+          <div className="row push">
+            <p className="section-title">Intent model</p>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={freeOnly}
+                onChange={(e) => setFreeOnly(e.target.checked)}
+              />
+              Free only
+            </label>
           </div>
-        ) : (
-          <div className="empty">No models to show yet.</div>
-        )}
 
-        {backend === "openai" ? (
-          <button className="btn linkish" type="button" disabled={busy} onClick={fetchModels}>
+          {loadingModels ? <div className="loading-bar" /> : null}
+
+          <div className="selected-pill">
+            Selected <b>{model || "none yet"}</b>
+          </div>
+
+          <div className="field">
+            <label>Or type a model ID</label>
+            <input
+              value={manual}
+              onChange={(e) => {
+                setManual(e.target.value);
+                setModel(e.target.value.trim());
+              }}
+            />
+          </div>
+
+          {visible.length ? (
+            <div className="model-grid">
+              {visible.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={`model-card ${model === id ? "selected" : ""}`}
+                  onClick={() => {
+                    setModel(id);
+                    setManual(id);
+                  }}
+                >
+                  <strong>{id}</strong>
+                  <span className={isFreeModel(id) ? "free" : ""}>
+                    {isFreeModel(id) ? "FREE" : "MODEL"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="empty">
+              {loadingModels
+                ? "Fetching models…"
+                : models.length
+                  ? "No free models in this list. Turn off Free only."
+                  : "No models returned. Check the API key."}
+            </div>
+          )}
+
+          <button className="btn linkish" type="button" disabled={busy || !keyReady} onClick={fetchModels}>
             Refresh models
           </button>
-        ) : null}
-        <p className="status-line">{message}</p>
-      </section>
+          <p className="status-line">{message}</p>
+        </section>
+      )}
 
       <div className="actions">
         <button
           className="btn primary"
           type="button"
-          disabled={busy}
+          disabled={busy || !keyReady || !model}
           onClick={() => persist(true, true)}
         >
           Save Intent details

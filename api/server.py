@@ -14,19 +14,18 @@ from pydantic import BaseModel, Field
 from agent import apply_llm_connection, get_active_connection_summary
 from api.status_store import get_status, update_status
 from core.llm_config import (
-    INTENT_MODEL_CHOICES,
     LlmConnection,
     PROVIDER_PRESETS,
     connection_from_env,
-    connection_to_env_updates,
     fetch_remote_models,
     is_free_model,
     load_saved_providers,
+    models_for_intent,
     preset_by_id,
+    save_connection,
     test_llm_connection,
 )
 from memory.store import get_name, get_preferences, remember_name, set_preference
-from ui.env_settings import upsert_env_values
 
 _ROOT = Path(__file__).resolve().parent.parent
 _WEB_DIST = _ROOT / "web" / "dist"
@@ -122,10 +121,16 @@ def list_providers() -> Dict[str, Any]:
         for p in PROVIDER_PRESETS
     ]
     saved = load_saved_providers()
+    conn = connection_from_env()
     return {
         "presets": presets,
         "saved": saved,
-        "intent_models": list(INTENT_MODEL_CHOICES),
+        # Models for the Intent provider the user currently has configured.
+        "intent_models": models_for_intent(
+            backend=conn.intent_backend,
+            intent_provider_id=conn.intent_provider_id or conn.provider_id,
+            selected_model=conn.intent_model,
+        ),
     }
 
 
@@ -161,7 +166,7 @@ def save_provider(body: ProviderSaveBody) -> Dict[str, Any]:
         intent_model=existing.intent_model,
         intent_confidence=existing.intent_confidence,
     )
-    upsert_env_values(connection_to_env_updates(connection))
+    save_connection(connection)
     apply_llm_connection(connection)
     update_status(active_model=get_active_connection_summary())
     return _connection_dict(connection)
@@ -204,7 +209,7 @@ def save_intent(body: IntentSaveBody) -> Dict[str, Any]:
         intent_model=body.intent_model.strip(),
         intent_confidence=float(body.intent_confidence),
     )
-    upsert_env_values(connection_to_env_updates(connection))
+    save_connection(connection)
     apply_llm_connection(connection)
     update_status(active_model=get_active_connection_summary())
     return _connection_dict(connection)

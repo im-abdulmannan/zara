@@ -12,16 +12,52 @@ PROVIDERS_PATH = _ROOT / "llm_providers.json"
 
 DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1"
 
-INTENT_MODEL_CHOICES = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
-]
-DEFAULT_INTENT_MODEL = "gemini-2.0-flash"
 DEFAULT_INTENT_CONFIDENCE = 0.7
+
+
+def models_for_intent(
+    *,
+    backend: str = "",
+    intent_provider_id: str = "",
+    selected_model: str = "",
+) -> List[str]:
+    """No preset Intent catalog — only the model the user already saved (if any).
+
+    Live model lists come from ``fetch_remote_models`` after the user pastes a key.
+    ``backend`` / ``intent_provider_id`` are kept for call-site compatibility.
+    """
+    del backend, intent_provider_id
+    selected = (selected_model or "").strip()
+    return [selected] if selected else []
+
+
+def default_intent_model_for(
+    *,
+    backend: str = "",
+    intent_provider_id: str = "",
+    main_model: str = "",
+) -> str:
+    """Prefer the user's main chat model; never invent a preset Intent model id."""
+    del backend, intent_provider_id
+    return (main_model or "").strip()
+
+
+def intent_fetch_base_url(
+    *,
+    backend: str,
+    intent_provider_id: str,
+    intent_base_url: str = "",
+) -> str:
+    """Resolve the OpenAI-compatible base URL used to list Intent models."""
+    explicit = (intent_base_url or "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    backend_norm = (backend or "gemini").strip().lower()
+    if backend_norm == "gemini":
+        preset = preset_by_id("gemini")
+    else:
+        preset = preset_by_id((intent_provider_id or "").strip())
+    return (preset.base_url if preset else "").strip().rstrip("/")
 
 
 @dataclass
@@ -35,77 +71,48 @@ class ProviderPreset:
     allow_empty_key: bool = False
 
 
+# Presets only carry endpoint metadata — model IDs are fetched live after the user pastes a key.
 PROVIDER_PRESETS: List[ProviderPreset] = [
     ProviderPreset(
         id="openai",
         label="ChatGPT",
         base_url="https://api.openai.com/v1",
-        models=["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "o4-mini"],
         api_key_placeholder="sk-...",
     ),
     ProviderPreset(
         id="gemini",
         label="Gemini",
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-        models=[
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-lite",
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
-        ],
         api_key_placeholder="AIza...",
     ),
     ProviderPreset(
         id="openrouter",
         label="OpenRouter",
         base_url=DEFAULT_OPENROUTER_URL,
-        models=[
-            "openrouter/free",
-            "openrouter/owl-alpha",
-            "openai/gpt-oss-20b:free",
-            "google/gemma-4-31b-it:free",
-            "google/gemma-4-26b-a4b-it:free",
-            "meta-llama/llama-3.3-70b-instruct:free",
-            "qwen/qwen3-coder",
-            "openai/gpt-oss-120b",
-        ],
         api_key_placeholder="sk-or-v1-...",
     ),
     ProviderPreset(
         id="groq",
         label="Groq",
         base_url="https://api.groq.com/openai/v1",
-        models=[
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "openai/gpt-oss-20b",
-        ],
         api_key_placeholder="gsk_...",
     ),
     ProviderPreset(
         id="deepseek",
         label="DeepSeek",
         base_url="https://api.deepseek.com/v1",
-        models=["deepseek-chat", "deepseek-reasoner"],
         api_key_placeholder="sk-...",
     ),
     ProviderPreset(
         id="together",
         label="Together AI",
         base_url="https://api.together.xyz/v1",
-        models=[
-            "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-            "Qwen/Qwen2.5-72B-Instruct-Turbo",
-        ],
         api_key_placeholder="together-...",
     ),
     ProviderPreset(
         id="ollama",
         label="Ollama (local)",
         base_url="http://localhost:11434/v1",
-        models=["llama3.2", "qwen2.5", "mistral", "phi4"],
         api_key_placeholder="ollama (optional)",
         default_api_key="ollama",
         allow_empty_key=True,
@@ -114,7 +121,6 @@ PROVIDER_PRESETS: List[ProviderPreset] = [
         id="lmstudio",
         label="LM Studio (local)",
         base_url="http://localhost:1234/v1",
-        models=["local-model"],
         api_key_placeholder="lm-studio (optional)",
         default_api_key="lm-studio",
         allow_empty_key=True,
@@ -123,7 +129,6 @@ PROVIDER_PRESETS: List[ProviderPreset] = [
         id="custom",
         label="Custom / Other",
         base_url="",
-        models=[],
         api_key_placeholder="API key (if required)",
         allow_empty_key=True,
     ),
@@ -159,7 +164,7 @@ class LlmConnection:
     intent_provider_id: str = "openrouter"
     intent_base_url: str = ""
     intent_api_key: str = ""
-    intent_model: str = DEFAULT_INTENT_MODEL
+    intent_model: str = ""
     intent_confidence: float = DEFAULT_INTENT_CONFIDENCE
 
 
@@ -208,8 +213,89 @@ def save_custom_provider(provider: Mapping[str, Any]) -> None:
     PROVIDERS_PATH.write_text(json.dumps(providers, indent=2), encoding="utf-8")
 
 
+def connection_to_dict(connection: LlmConnection) -> Dict[str, Any]:
+    """Serialize a connection for local ``user_settings.json`` (not ``.env``)."""
+    return {
+        "provider_id": connection.provider_id,
+        "label": connection.label,
+        "base_url": connection.base_url.rstrip("/"),
+        "api_key": connection.api_key,
+        "model": connection.model,
+        "gemini_api_key": connection.gemini_api_key,
+        "intent_enabled": bool(connection.intent_enabled),
+        "intent_backend": connection.intent_backend or "gemini",
+        "intent_provider_id": connection.intent_provider_id or "openrouter",
+        "intent_base_url": (connection.intent_base_url or "").rstrip("/"),
+        "intent_api_key": connection.intent_api_key,
+        "intent_model": connection.intent_model,
+        "intent_confidence": float(connection.intent_confidence),
+    }
+
+
+def connection_from_dict(data: Mapping[str, Any]) -> LlmConnection:
+    """Deserialize a connection from local settings."""
+    provider_id = str(data.get("provider_id") or "openrouter").strip() or "openrouter"
+    preset = preset_by_id(provider_id)
+    intent_backend = str(data.get("intent_backend") or "gemini").strip().lower()
+    if intent_backend not in {"gemini", "openai"}:
+        intent_backend = "gemini"
+    try:
+        intent_confidence = float(
+            data.get("intent_confidence", DEFAULT_INTENT_CONFIDENCE)
+        )
+    except (TypeError, ValueError):
+        intent_confidence = DEFAULT_INTENT_CONFIDENCE
+    return LlmConnection(
+        provider_id=provider_id,
+        label=str(data.get("label") or (preset.label if preset else "Custom")),
+        base_url=str(data.get("base_url") or (preset.base_url if preset else DEFAULT_OPENROUTER_URL))
+        .strip()
+        .rstrip("/"),
+        api_key=str(data.get("api_key") or ""),
+        model=str(data.get("model") or ""),
+        gemini_api_key=str(data.get("gemini_api_key") or ""),
+        intent_enabled=bool(data.get("intent_enabled", True)),
+        intent_backend=intent_backend,
+        intent_provider_id=str(data.get("intent_provider_id") or provider_id or "openrouter"),
+        intent_base_url=str(data.get("intent_base_url") or "").strip().rstrip("/"),
+        intent_api_key=str(data.get("intent_api_key") or ""),
+        intent_model=str(data.get("intent_model") or ""),
+        intent_confidence=max(0.0, min(1.0, intent_confidence)),
+    )
+
+
+def load_saved_connection() -> Optional[LlmConnection]:
+    """Load LLM settings from local ``user_settings.json`` when present."""
+    from core.user_settings import load_user_settings
+
+    data = load_user_settings()
+    llm = data.get("llm")
+    if isinstance(llm, dict) and llm:
+        return connection_from_dict(llm)
+    return None
+
+
+def save_connection(connection: LlmConnection) -> Path:
+    """Persist LLM/Intent settings locally — never writes secrets into ``.env``."""
+    from core.user_settings import save_user_settings
+
+    return save_user_settings({"llm": connection_to_dict(connection)})
+
+
 def connection_from_env() -> LlmConnection:
-    """Build the active connection from environment / .env values."""
+    """Active connection: local ``user_settings.json`` first, else process env / ``.env``.
+
+    UI saves go to the local file so open-source checkouts are not littered with keys.
+    Optional ``.env`` remains for bootstrap, CI, and headless runs.
+    """
+    saved = load_saved_connection()
+    if saved is not None:
+        return saved
+    return _connection_from_environ()
+
+
+def _connection_from_environ() -> LlmConnection:
+    """Build a connection from environment / optional ``.env`` values only."""
     provider_id = (os.getenv("LLM_PROVIDER") or "openrouter").strip() or "openrouter"
     preset = preset_by_id(provider_id) or preset_by_id("openrouter")
     assert preset is not None
@@ -227,11 +313,7 @@ def connection_from_env() -> LlmConnection:
         or preset.default_api_key
         or ""
     ).strip()
-    model = (
-        os.getenv("MODEL_NAME")
-        or os.getenv("LLM_MODEL")
-        or (preset.models[0] if preset.models else "gpt-4o-mini")
-    ).strip()
+    model = (os.getenv("MODEL_NAME") or os.getenv("LLM_MODEL") or "").strip()
     gemini = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
     intent_backend = (os.getenv("INTENT_BACKEND") or "gemini").strip().lower()
     if intent_backend not in {"gemini", "openai"}:
@@ -242,9 +324,18 @@ def connection_from_env() -> LlmConnection:
         os.getenv("INTENT_API_KEY") or gemini or ""
     ).strip()
     intent_base_url = (os.getenv("INTENT_BASE_URL") or "").strip()
-    intent_provider_id = (os.getenv("INTENT_PROVIDER") or "openrouter").strip() or "openrouter"
-    default_intent_model = (
-        DEFAULT_INTENT_MODEL if intent_backend == "gemini" else "openrouter/free"
+    # Default Intent to the same provider stack the user chose for chat.
+    intent_provider_id = (
+        os.getenv("INTENT_PROVIDER") or provider_id or "openrouter"
+    ).strip() or "openrouter"
+    if not intent_base_url and intent_backend == "openai":
+        intent_base_url = base_url
+    if not intent_api_key and intent_backend == "openai":
+        intent_api_key = api_key
+    default_intent_model = default_intent_model_for(
+        backend=intent_backend,
+        intent_provider_id=intent_provider_id,
+        main_model=model,
     )
     intent_model = (os.getenv("INTENT_MODEL") or default_intent_model).strip()
     try:
@@ -273,7 +364,7 @@ def connection_from_env() -> LlmConnection:
 
 
 def connection_to_env_updates(connection: LlmConnection) -> Dict[str, str]:
-    """Map a connection to .env keys."""
+    """Map a connection to process-env keys (in-memory / optional bootstrap only)."""
     intent_key = connection.intent_api_key or connection.gemini_api_key
     updates = {
         "LLM_PROVIDER": connection.provider_id,
@@ -285,7 +376,12 @@ def connection_to_env_updates(connection: LlmConnection) -> Dict[str, str]:
         "INTENT_PROVIDER": connection.intent_provider_id or "openrouter",
         "INTENT_BASE_URL": (connection.intent_base_url or "").rstrip("/"),
         "INTENT_API_KEY": intent_key,
-        "INTENT_MODEL": connection.intent_model or DEFAULT_INTENT_MODEL,
+        "INTENT_MODEL": connection.intent_model
+        or default_intent_model_for(
+            backend=connection.intent_backend or "gemini",
+            intent_provider_id=connection.intent_provider_id or connection.provider_id,
+            main_model=connection.model,
+        ),
         "INTENT_CONFIDENCE_THRESHOLD": f"{connection.intent_confidence:.2f}",
         "GEMINI_API_KEY": intent_key if (connection.intent_backend or "gemini") == "gemini" else (
             connection.gemini_api_key or intent_key

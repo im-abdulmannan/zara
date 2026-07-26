@@ -3,6 +3,8 @@
 .env.*
 !.env.example
 llm_providers.json
+# Per-user LLM keys + UI prefs (never commit)
+user_settings.json
 
 # Virtual environment
 .venv/

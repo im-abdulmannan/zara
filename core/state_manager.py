@@ -29,12 +29,22 @@ _TRANSITIONS: Mapping[AssistantState, FrozenSet[AssistantState]] = {
         {AssistantState.WAKE_DETECTED, AssistantState.LISTENING, AssistantState.ERROR}
     ),
     AssistantState.WAKE_DETECTED: frozenset(
-        {AssistantState.LISTENING, AssistantState.SPEAKING, AssistantState.ERROR, AssistantState.IDLE}
+        {
+            AssistantState.LISTENING,
+            AssistantState.RECORDING,
+            AssistantState.THINKING,
+            AssistantState.SPEAKING,
+            AssistantState.ERROR,
+            AssistantState.IDLE,
+        }
     ),
     AssistantState.LISTENING: frozenset(
         {
             AssistantState.RECORDING,
             AssistantState.WAKE_DETECTED,
+            # Wake-phrase-included commands go LISTENING -> THINKING without a second capture.
+            AssistantState.THINKING,
+            AssistantState.SPEAKING,
             AssistantState.IDLE,
             AssistantState.ERROR,
         }
@@ -43,6 +53,7 @@ _TRANSITIONS: Mapping[AssistantState, FrozenSet[AssistantState]] = {
         {
             AssistantState.THINKING,
             AssistantState.LISTENING,
+            AssistantState.SPEAKING,
             AssistantState.WAKE_DETECTED,
             AssistantState.IDLE,
             AssistantState.ERROR,

@@ -282,6 +282,14 @@ class VoiceOrchestrator:
         if not capture.succeeded or capture.audio is None:
             return False
 
+        # Ignore tiny blips (often TTS echo) that VAD treats as speech.
+        if capture.speech_duration_sec < max(0.45, self.config.minimum_speech_duration):
+            _logger.info(
+                "Ignoring short command capture (%.2fs speech)",
+                capture.speech_duration_sec,
+            )
+            return True
+
         self.state.transition(AssistantState.RECORDING, reason="command_capture")
 
         transcript = self._transcribe_safe(capture.audio)
@@ -289,6 +297,8 @@ class VoiceOrchestrator:
             _logger.warning("STT returned empty transcript; returning to listen")
             self.state.transition(AssistantState.LISTENING, reason="stt_retry")
             self._speak_safe("I didn't catch that. Please try again.")
+            # Pause so the retry prompt is not captured as the next utterance.
+            time.sleep(float(getattr(self.config, "post_wake_listen_delay_sec", 0.8) or 0.8))
             return True
 
         self.bus.emit(

@@ -76,13 +76,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design.
    pip install -r requirements.txt
    ```
 
-4. **Configure environment variables**
+4. **Configure your LLM**
 
-   ```powershell
-   copy .env.example .env
-   ```
+   Start Zara, open the settings UI, and paste your provider API key there.
+   Keys and model choices are stored in local `user_settings.json` (gitignored).
 
-   Edit `.env` and add your API keys.
+   Optional: copy `.env.example` to `.env` only for headless/CI bootstrap or
+   non-secret voice tweaks — the UI does **not** write secrets into `.env`.
 
 5. **Run Zara**
 

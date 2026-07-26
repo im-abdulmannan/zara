@@ -57,7 +57,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   status: () => request<LiveStatus>("/api/status"),
   providers: () =>
-    request<{ presets: ProviderPreset[]; saved: unknown[]; intent_models: string[] }>(
+    request<{ presets: ProviderPreset[]; saved: unknown[]; intent_models?: string[] }>(
       "/api/providers",
     ),
   connection: () => request<Connection>("/api/connection"),

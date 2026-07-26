@@ -63,7 +63,11 @@ def apply_llm_connection(connection: LlmConnection) -> None:
         intent_provider_id=connection.intent_provider_id or "openrouter",
         intent_base_url=(connection.intent_base_url or "").rstrip("/"),
         intent_api_key=intent_key,
-        intent_model=(connection.intent_model or "gemini-2.0-flash").strip(),
+        intent_model=(
+            connection.intent_model
+            or connection.model
+            or "gemini-2.0-flash"
+        ).strip(),
         intent_confidence=max(0.0, min(1.0, float(connection.intent_confidence))),
     )
     os.environ["LLM_PROVIDER"] = _active.provider_id

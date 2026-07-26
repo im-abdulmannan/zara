@@ -3,8 +3,12 @@ from __future__ import annotations
 
 from core.llm_config import (
     LlmConnection,
+    connection_from_env,
     connection_to_env_updates,
+    load_saved_connection,
+    models_for_intent,
     preset_by_id,
+    save_connection,
     save_custom_provider,
     load_saved_providers,
 )
@@ -14,7 +18,7 @@ def test_openrouter_preset_exists():
     preset = preset_by_id("openrouter")
     assert preset is not None
     assert "openrouter.ai" in preset.base_url
-    assert preset.models
+    assert preset.models == []
 
 
 def test_connection_to_env_updates_syncs_openrouter_key():
@@ -63,6 +67,52 @@ def test_intent_openai_backend_env_mapping():
     assert updates["INTENT_BASE_URL"] == "https://api.groq.com/openai/v1"
     assert updates["INTENT_API_KEY"] == "gsk-test"
     assert updates["INTENT_MODEL"] == "llama-3.3-70b-versatile"
+
+
+def test_intent_models_have_no_presets():
+    assert models_for_intent(backend="gemini", intent_provider_id="gemini") == []
+    assert models_for_intent(
+        backend="openai",
+        intent_provider_id="groq",
+        selected_model="custom-intent",
+    ) == ["custom-intent"]
+
+
+def test_connection_persists_to_user_settings_not_env(tmp_path, monkeypatch):
+    import core.llm_config as llm_config
+    import core.user_settings as user_settings
+
+    settings_path = tmp_path / "user_settings.json"
+    env_path = tmp_path / ".env"
+    monkeypatch.setattr(user_settings, "USER_SETTINGS_PATH", settings_path)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("MODEL_NAME", raising=False)
+
+    conn = LlmConnection(
+        provider_id="openrouter",
+        label="OpenRouter",
+        base_url="https://openrouter.ai/api/v1",
+        api_key="sk-local-secret",
+        model="openrouter/free",
+        intent_enabled=False,
+        intent_backend="openai",
+        intent_provider_id="openrouter",
+        intent_base_url="https://openrouter.ai/api/v1",
+        intent_api_key="sk-intent",
+        intent_model="openrouter/free",
+        intent_confidence=0.8,
+    )
+    save_connection(conn)
+
+    assert settings_path.exists()
+    assert "sk-local-secret" in settings_path.read_text(encoding="utf-8")
+    assert not env_path.exists()
+
+    loaded = load_saved_connection()
+    assert loaded is not None
+    assert loaded.api_key == "sk-local-secret"
+    assert loaded.model == "openrouter/free"
+    assert connection_from_env().api_key == "sk-local-secret"
 
 
 def test_custom_provider_persistence(tmp_path, monkeypatch):

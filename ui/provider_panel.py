@@ -20,14 +20,13 @@ from core.llm_config import (
     LlmConnection,
     PROVIDER_PRESETS,
     connection_from_env,
-    connection_to_env_updates,
+    save_connection,
     fetch_remote_models,
     load_saved_providers,
     preset_by_id,
     save_custom_provider,
     test_llm_connection,
 )
-from ui.env_settings import upsert_env_values
 from ui.model_grid import ModelGrid
 
 
@@ -400,11 +399,15 @@ class ProviderPanel(QWidget):
         connection = self._validate()
         if connection is None:
             return
-        upsert_env_values(connection_to_env_updates(connection))
+        save_connection(connection)
         apply_llm_connection(connection)
         self.status_label.setText(f"Applied: {get_active_connection_summary()}")
         self.connection_saved.emit()
-        QMessageBox.information(self, "Saved", "Provider settings saved to .env and applied.")
+        QMessageBox.information(
+            self,
+            "Saved",
+            "Provider settings saved locally (user_settings.json) and applied.",
+        )
 
     def _save_as_custom(self) -> None:
         connection = self._validate(require_key=False)
