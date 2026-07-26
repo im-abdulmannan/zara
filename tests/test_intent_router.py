@@ -34,6 +34,36 @@ def test_low_confidence_defers_to_llm(router):
     assert router.route("remind me at 5pm to call mom", result) is None
 
 
+def test_router_reload_updates_confidence_threshold(router):
+    from intent.config import IntentConfig
+
+    result = ClassificationResult(
+        intent=Intent.OPEN_APPLICATION,
+        confidence=0.6,
+        entities={"app": "chrome"},
+    )
+    assert router.route("open chrome", result) is not None
+
+    router.reload_settings(
+        IntentConfig(api_key="test", confidence_threshold=0.9, enabled=True)
+    )
+    assert router.route("open chrome", result) is None
+
+
+def test_router_disabled_defers_to_llm(router):
+    from intent.config import IntentConfig
+
+    router.reload_settings(
+        IntentConfig(api_key="test", confidence_threshold=0.5, enabled=False)
+    )
+    result = ClassificationResult(
+        intent=Intent.OPEN_APPLICATION,
+        confidence=0.95,
+        entities={"app": "chrome"},
+    )
+    assert router.route("open chrome", result) is None
+
+
 def test_reminder_create_routes_to_set_reminder(router):
     result = ClassificationResult(
         intent=Intent.REMINDER_CREATE,

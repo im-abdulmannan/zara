@@ -40,6 +40,13 @@ def test_parse_agent_payload_strips_markdown_fences():
     assert payload["response"] == "hi"
 
 
+def test_parse_agent_payload_repairs_windows_path_escapes():
+    raw = r'{"tool": "chat", "response": "Saved to C:\Users\Demo\file.txt"}'
+    payload = parse_agent_payload(raw)
+    assert payload["tool"] == "chat"
+    assert "C:" in payload["response"]
+
+
 def test_extract_tool_calls_single_tool():
     calls = extract_tool_calls({"tool": "get_time"})
     assert len(calls) == 1

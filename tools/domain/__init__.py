@@ -1,6 +1,7 @@
 """Domain tools backed by ZaraRuntime (reminders, habits, notes, etc.)."""
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Any, Mapping
 
@@ -10,6 +11,11 @@ from runtime import get_runtime
 from time_parser import parse_when
 from time_parser.exceptions import TimeParseError
 from tools.base import BaseTool, ToolParameter, ToolResult
+
+
+def _default_ics_path() -> str:
+    documents = os.path.join(os.path.expanduser("~"), "Documents")
+    return os.path.join(documents, "zara_meetings.ics")
 
 
 def _format_time(when: datetime) -> str:
@@ -460,3 +466,55 @@ class QueryMemoryTool(BaseTool):
         if not summary.strip() or summary.startswith("No stored"):
             return ToolResult(True, "I don't have anything stored about you yet.")
         return ToolResult(True, summary)
+
+
+class ExportCalendarTool(BaseTool):
+    name = "export_calendar"
+    description = "Export saved meetings to an iCalendar (.ics) file."
+    parameters = (
+        ToolParameter("path", "Destination .ics file path", required=False),
+        ToolParameter("response", "Spoken confirmation override", required=False),
+    )
+    intent_keywords = ("export calendar", "export meetings", "save calendar", "ics")
+
+    def execute(self, params: Mapping[str, Any]) -> ToolResult:
+        path = (params.get("path") or "").strip() or _default_ics_path()
+        meetings = get_runtime().list_meetings()
+        if not meetings:
+            return ToolResult(True, "You have no meetings to export.")
+        try:
+            saved = get_runtime().export_meetings_ics(path)
+        except OSError as exc:
+            return ToolResult(False, f"Could not export calendar: {exc}")
+        return ToolResult(
+            True,
+            params.get("response")
+            or f"Exported {len(meetings)} meetings to {saved}.",
+            {"path": saved, "count": len(meetings)},
+        )
+
+
+class ImportCalendarTool(BaseTool):
+    name = "import_calendar"
+    description = "Import meetings from an iCalendar (.ics) file."
+    parameters = (
+        ToolParameter("path", "Source .ics file path", required=False),
+        ToolParameter("response", "Spoken confirmation override", required=False),
+    )
+    intent_keywords = ("import calendar", "import meetings", "load calendar", "ics")
+
+    def execute(self, params: Mapping[str, Any]) -> ToolResult:
+        path = (params.get("path") or "").strip() or _default_ics_path()
+        if not os.path.exists(path):
+            return ToolResult(False, f"I couldn't find a calendar file at {path}.")
+        try:
+            count = get_runtime().import_meetings_ics(path)
+        except (OSError, FileNotFoundError, ValueError) as exc:
+            return ToolResult(False, f"Could not import calendar: {exc}")
+        if count == 0:
+            return ToolResult(True, "No meetings were found in that calendar file.")
+        return ToolResult(
+            True,
+            params.get("response") or f"Imported {count} meetings from {path}.",
+            {"path": path, "count": count},
+        )

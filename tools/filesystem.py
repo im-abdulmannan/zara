@@ -4,15 +4,68 @@ from __future__ import annotations
 import glob
 import os
 import shutil
+import time
 from typing import Any, Mapping
 
 from tools.base import BaseTool, ToolParameter, ToolResult
 from tools.registration import register_tool
 
+_SKIP_DIR_NAMES = {
+    "$recycle.bin",
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    "appdata",
+    "application data",
+    "local settings",
+    "windows",
+    "program files",
+    "program files (x86)",
+    "programdata",
+    "system volume information",
+}
+
 
 def _resolve_path(path: str) -> str:
     expanded = os.path.expanduser(path.strip())
     return os.path.abspath(expanded)
+
+
+def _default_search_roots() -> list[str]:
+    """Prefer common user/project locations over a full-disk crawl."""
+    home = os.path.expanduser("~")
+    roots = [
+        home,
+        os.path.join(home, "Documents"),
+        os.path.join(home, "Desktop"),
+        os.path.join(home, "Downloads"),
+        os.path.join(home, "source"),
+        os.path.join(home, "projects"),
+        os.path.join(home, "dev"),
+    ]
+    # Common Windows drive roots for project folders.
+    for drive in ("D:\\", "C:\\", "E:\\"):
+        if os.path.isdir(drive):
+            roots.append(drive)
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for root in roots:
+        path = os.path.abspath(root)
+        key = path.lower()
+        if key in seen or not os.path.isdir(path):
+            continue
+        seen.add(key)
+        ordered.append(path)
+    return ordered
+
+
+def _should_skip_dir(name: str) -> bool:
+    return name.lower() in _SKIP_DIR_NAMES
 
 
 @register_tool
@@ -55,41 +108,119 @@ class OpenFolderTool(BaseTool):
 @register_tool
 class SearchFilesTool(BaseTool):
     name = "search_files"
-    description = "Search for files by name pattern under a directory."
+    description = (
+        "Search for files or folders by name on this computer. "
+        "Use when the user asks to find a project, folder, or file "
+        "(e.g. query='zara'). Searches home, Documents, Desktop, and common drives."
+    )
     parameters = (
-        ToolParameter("query", "Filename or glob pattern, e.g. *.pdf or report"),
+        ToolParameter(
+            "query",
+            "Name or glob pattern to find, e.g. zara, *.pdf, or report",
+        ),
         ToolParameter(
             "directory",
-            "Directory to search (defaults to user home)",
+            "Optional root directory; omit to search common locations",
+            required=False,
+        ),
+        ToolParameter(
+            "kind",
+            "Optional: file, folder, or both (default both)",
             required=False,
         ),
     )
+    intent_keywords = ("find file", "find folder", "search files", "where is", "locate")
 
     def execute(self, params: Mapping[str, Any]) -> ToolResult:
-        query = (params.get("query") or "").strip()
+        query = (
+            params.get("query")
+            or params.get("name")
+            or params.get("filename")
+            or params.get("folder")
+            or params.get("pattern")
+            or ""
+        )
+        query = str(query).strip()
         if not query:
-            return ToolResult(False, "What file should I search for?")
-        directory = _resolve_path(params.get("directory") or "~")
-        if not os.path.isdir(directory):
-            return ToolResult(False, f"Directory {directory} does not exist.")
+            return ToolResult(False, "What file or folder should I search for?")
+
+        kind = str(params.get("kind") or "both").strip().lower()
+        want_files = kind in {"file", "files", "both", "any", ""}
+        want_folders = kind in {"folder", "folders", "directory", "dir", "project", "both", "any", ""}
+
+        roots: list[str]
+        if params.get("directory"):
+            directory = _resolve_path(str(params.get("directory") or ""))
+            if not os.path.isdir(directory):
+                return ToolResult(False, f"Directory {directory} does not exist.")
+            roots = [directory]
+        else:
+            roots = _default_search_roots()
 
         pattern = query if ("*" in query or "?" in query) else f"*{query}*"
-        matches: list[str] = []
-        for root, _, filenames in os.walk(directory):
-            for filename in filenames:
-                if glob.fnmatch.fnmatch(filename.lower(), pattern.lower()):
-                    matches.append(os.path.join(root, filename))
-            if len(matches) >= 20:
+        pattern_l = pattern.lower()
+        file_matches: list[str] = []
+        folder_matches: list[str] = []
+        started = time.monotonic()
+        max_seconds = 12.0
+        max_results = 20
+
+        for start_root in roots:
+            for root, dirnames, filenames in os.walk(start_root):
+                if time.monotonic() - started > max_seconds:
+                    break
+                # Prune heavy / system directories in-place.
+                dirnames[:] = [d for d in dirnames if not _should_skip_dir(d)]
+
+                if want_folders:
+                    for dirname in list(dirnames):
+                        if glob.fnmatch.fnmatch(dirname.lower(), pattern_l):
+                            folder_matches.append(os.path.join(root, dirname))
+                            if len(folder_matches) + len(file_matches) >= max_results:
+                                break
+
+                if want_files and len(folder_matches) + len(file_matches) < max_results:
+                    for filename in filenames:
+                        if glob.fnmatch.fnmatch(filename.lower(), pattern_l):
+                            file_matches.append(os.path.join(root, filename))
+                            if len(folder_matches) + len(file_matches) >= max_results:
+                                break
+
+                if len(folder_matches) + len(file_matches) >= max_results:
+                    break
+            if len(folder_matches) + len(file_matches) >= max_results:
+                break
+            if time.monotonic() - started > max_seconds:
                 break
 
+        matches = folder_matches + file_matches
         if not matches:
-            return ToolResult(True, f"No files matching {query} in {directory}.", {"matches": []})
-        listed = "; ".join(matches[:5])
-        suffix = f" and {len(matches) - 5} more" if len(matches) > 5 else ""
+            where = roots[0] if len(roots) == 1 else "your common project folders"
+            return ToolResult(
+                True,
+                f"I couldn't find anything named {query} under {where}.",
+                {"matches": [], "folders": [], "files": []},
+            )
+
+        parts: list[str] = []
+        if folder_matches:
+            parts.append(
+                "folders: " + "; ".join(folder_matches[:5])
+                + (f" and {len(folder_matches) - 5} more" if len(folder_matches) > 5 else "")
+            )
+        if file_matches:
+            parts.append(
+                "files: " + "; ".join(file_matches[:5])
+                + (f" and {len(file_matches) - 5} more" if len(file_matches) > 5 else "")
+            )
         return ToolResult(
             True,
-            f"Found {len(matches)} files: {listed}{suffix}.",
-            {"matches": matches[:20]},
+            f"Found {len(matches)} matches for {query}. " + " ".join(parts) + ".",
+            {
+                "matches": matches[:max_results],
+                "folders": folder_matches[:max_results],
+                "files": file_matches[:max_results],
+            },
         )
 
 
@@ -179,6 +310,8 @@ class DeleteFileTool(BaseTool):
     parameters = (
         ToolParameter("path", "Path to delete"),
     )
+    requires_confirmation = True
+    intent_keywords = ("delete file", "delete folder", "remove file")
 
     def execute(self, params: Mapping[str, Any]) -> ToolResult:
         path = _resolve_path(params.get("path") or "")

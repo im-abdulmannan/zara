@@ -27,6 +27,9 @@ class Speaker(Protocol):
     def speak(self, text: str) -> None:
         ...
 
+    def stop(self) -> None:
+        ...
+
     @property
     def is_speaking(self) -> bool:
         ...
@@ -36,16 +39,9 @@ class Speaker(Protocol):
 
 
 class _LockGuardedSpeaker:
-    """Base class providing the shared lock + ``is_speaking`` semantics.
-
-    Subclasses implement :meth:`_emit` to actually produce sound. A
-    :class:`threading.Lock` serialises callers; an :class:`threading.Event`
-    exposes whether speech is currently in progress.
-    """
+    """Base class providing the shared lock + ``is_speaking`` semantics."""
 
     def __init__(self, lock: Optional[threading.Lock] = None) -> None:
-        # Allow an external lock to be injected so the whole app can share one
-        # "speech channel" and never talk over itself.
         self._lock = lock or threading.Lock()
         self._speaking = threading.Event()
 
@@ -60,11 +56,6 @@ class _LockGuardedSpeaker:
         return self._lock
 
     def speak(self, text: str) -> None:
-        """Speaks ``text``, blocking until finished.
-
-        Acquiring the lock means a second caller waits here until the current
-        utterance completes -- guaranteeing no interruption.
-        """
         if not text or not str(text).strip():
             _logger.debug("Empty text passed to speak(); ignored.")
             return
@@ -75,14 +66,12 @@ class _LockGuardedSpeaker:
             finally:
                 self._speaking.clear()
 
-    def wait_until_idle(self, timeout: Optional[float] = None) -> bool:
-        """Blocks until no utterance is in progress.
+    def stop(self) -> None:
+        """Stop current speech output immediately."""
+        from voice.tts import stop_speech
+        stop_speech()
 
-        Returns True if idle, False if ``timeout`` elapsed while still speaking.
-        Useful for the assistant to defer its own speech until a reminder ends.
-        """
-        # Acquiring then releasing the lock guarantees the current utterance
-        # has finished. We honour the timeout via lock.acquire(timeout=...).
+    def wait_until_idle(self, timeout: Optional[float] = None) -> bool:
         acquired = self._lock.acquire(timeout=timeout if timeout is not None else -1)
         if acquired:
             self._lock.release()
@@ -106,8 +95,6 @@ class TTSSpeaker(_LockGuardedSpeaker):
     def _emit(self, text: str) -> None:
         speak_func = self._speak_func
         if speak_func is None:
-            # Imported lazily so this package does not hard-depend on the voice
-            # subsystem (and stays importable in headless tests).
             from voice.tts import speak as speak_func  # type: ignore
         _logger.info("Speaking: %r", text)
         speak_func(text)

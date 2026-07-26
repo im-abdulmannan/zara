@@ -92,6 +92,10 @@ class MeetingService:
         """Returns a meeting or raises :class:`MeetingNotFoundError`."""
         return self._repo.get_or_raise(meeting_id)
 
+    def list_meetings(self) -> List[Meeting]:
+        """Return all persisted meetings, soonest-first by date/time."""
+        return self._repo.list_all()
+
     # -- queries -----------------------------------------------------------
     def get_meetings_on(self, day: date) -> List[Meeting]:
         """Meetings scheduled for a specific calendar day, ordered by time."""

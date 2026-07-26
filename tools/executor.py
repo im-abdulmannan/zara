@@ -12,6 +12,8 @@ from tools.registry import ToolRegistry, get_registry
 _logger = get_logger(__name__)
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
+# Invalid escapes like Windows paths (C:\Users) break json.loads.
+_INVALID_ESCAPE_RE = re.compile(r'\\(?!["\\/bfnrtu]|u[0-9a-fA-F]{4})')
 
 
 @dataclass
@@ -32,10 +34,30 @@ class ExecutionPlan:
         return all(step.success for step in self.steps)
 
 
+def _loads_json_lenient(text: str) -> dict[str, Any]:
+    """json.loads with repair for invalid backslash escapes from LLMs."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        repaired = _INVALID_ESCAPE_RE.sub(r"\\\\", text)
+        data = json.loads(repaired)
+    if not isinstance(data, dict):
+        raise json.JSONDecodeError("Expected a JSON object", text, 0)
+    return data
+
+
 def parse_agent_payload(raw: str) -> dict[str, Any]:
     """Parse JSON from the LLM, stripping optional markdown fences."""
     cleaned = _FENCE_RE.sub("", (raw or "").strip()).strip()
-    return json.loads(cleaned)
+    try:
+        return _loads_json_lenient(cleaned)
+    except json.JSONDecodeError:
+        # Recover when models wrap JSON with prose or extra tokens.
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start >= 0 and end > start:
+            return _loads_json_lenient(cleaned[start : end + 1])
+        raise
 
 
 def extract_tool_calls(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -56,6 +78,19 @@ def extract_tool_calls(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def normalize_tool_params(call: dict[str, Any]) -> dict[str, Any]:
+    """Flatten LLM tool payloads, including nested ``params`` objects."""
+    data = dict(call or {})
+    nested = data.pop("params", None)
+    data.pop("tool", None)
+    data.pop("response", None)
+    if isinstance(nested, dict):
+        merged = dict(nested)
+        merged.update(data)
+        return merged
+    return data
+
+
 def execute_plan(
     payload: dict[str, Any],
     registry: ToolRegistry | None = None,
@@ -70,11 +105,12 @@ def execute_plan(
         tool_name = str(call.get("tool", "")).strip()
         if not tool_name:
             continue
-        result = registry.execute(tool_name, call)
+        params = normalize_tool_params(call)
+        result = registry.execute(tool_name, params)
         plan.steps.append(
             ExecutionStep(
                 tool=tool_name,
-                params=call,
+                params=params,
                 success=result.success,
                 message=result.message,
             )

@@ -10,7 +10,8 @@ from voice.wake_word import WakeWordDetector
 def detector():
     return WakeWordDetector(
         phrases=("hello zara", "hey zara", "zara"),
-        sleep_phrases=("sleep zara", "go to sleep"),
+        sleep_phrases=("sleep zara", "go to sleep", "goodbye zara"),
+        use_streaming=False,
     )
 
 
@@ -21,6 +22,7 @@ def detector():
         "Hey Zara, are you there?",
         "hello zara",
         "zara",
+        "Zara what's the time",
     ],
 )
 def test_wake_phrases_detected(detector, text):
@@ -34,6 +36,8 @@ def test_wake_phrases_detected(detector, text):
         "open chrome",
         "",
         "   ",
+        "is zara ready",  # bare name not mid-sentence
+        "czara",
     ],
 )
 def test_non_wake_phrases_rejected(detector, text):
@@ -46,6 +50,7 @@ def test_non_wake_phrases_rejected(detector, text):
         "sleep zara",
         "go to sleep",
         "Okay, go to sleep now",
+        "goodbye zara",
     ],
 )
 def test_sleep_phrases_detected(detector, text):
@@ -53,12 +58,17 @@ def test_sleep_phrases_detected(detector, text):
 
 
 def test_sleep_not_wake(detector):
-    """Sleep phrases without the wake substring should not trigger wake."""
+    """Sleep phrases should never also count as wake."""
     assert detector.is_sleep("go to sleep") is True
     assert detector.is_wake("go to sleep") is False
 
 
-def test_sleep_phrase_containing_wake_word_also_matches_wake(detector):
-    """'sleep zara' contains 'zara' — both sleep and wake match (known quirk)."""
+def test_sleep_phrase_containing_name_is_not_wake(detector):
+    """'sleep zara' must sleep, not wake, even though it contains 'zara'."""
     assert detector.is_sleep("sleep zara") is True
-    assert detector.is_wake("sleep zara") is True
+    assert detector.is_wake("sleep zara") is False
+
+
+def test_extract_command_after_wake(detector):
+    assert detector.extract_command_after_wake("hey zara, how are you?") == "how are you"
+    assert detector.extract_command_after_wake("hey zara") == ""

@@ -204,6 +204,20 @@ class ZaraRuntime:
             notes=notes,
         )
 
+    def list_meetings(self) -> List[Meeting]:
+        return self.meeting_service.list_meetings()
+
+    def export_meetings_ics(self, filepath: str) -> str:
+        from calendar_sync import export_meetings_to_ics
+
+        meetings = self.meeting_service.list_meetings()
+        return export_meetings_to_ics(meetings, filepath)
+
+    def import_meetings_ics(self, filepath: str) -> int:
+        from calendar_sync import import_meetings_from_ics
+
+        return import_meetings_from_ics(filepath, self.meeting_service)
+
     # -- notes ------------------------------------------------------------
     def create_note(self, title: str, content: str, *, tags: str = "") -> Note:
         return self.note_service.create_note(

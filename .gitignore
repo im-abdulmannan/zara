@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+llm_providers.json
 
 # Virtual environment
 .venv/
@@ -16,8 +17,10 @@ __pycache__/
 .Python
 build/
 develop-eggs/
-dist/
+/dist/
 downloads/
+web/node_modules/
+web/dist/
 eggs/
 .eggs/
 lib/

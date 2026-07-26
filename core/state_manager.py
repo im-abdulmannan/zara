@@ -32,10 +32,21 @@ _TRANSITIONS: Mapping[AssistantState, FrozenSet[AssistantState]] = {
         {AssistantState.LISTENING, AssistantState.SPEAKING, AssistantState.ERROR, AssistantState.IDLE}
     ),
     AssistantState.LISTENING: frozenset(
-        {AssistantState.RECORDING, AssistantState.IDLE, AssistantState.ERROR}
+        {
+            AssistantState.RECORDING,
+            AssistantState.WAKE_DETECTED,
+            AssistantState.IDLE,
+            AssistantState.ERROR,
+        }
     ),
     AssistantState.RECORDING: frozenset(
-        {AssistantState.THINKING, AssistantState.LISTENING, AssistantState.IDLE, AssistantState.ERROR}
+        {
+            AssistantState.THINKING,
+            AssistantState.LISTENING,
+            AssistantState.WAKE_DETECTED,
+            AssistantState.IDLE,
+            AssistantState.ERROR,
+        }
     ),
     AssistantState.THINKING: frozenset(
         {AssistantState.EXECUTING_TOOL, AssistantState.SPEAKING, AssistantState.ERROR, AssistantState.IDLE}

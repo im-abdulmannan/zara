@@ -19,8 +19,22 @@ class IntentRouter:
         self._logger = get_logger(__name__, self._config.log_level)
 
     @property
+    def config(self) -> IntentConfig:
+        return self._config
+
+    @property
     def confidence_threshold(self) -> float:
         return self._config.confidence_threshold
+
+    def reload_settings(self, config: IntentConfig) -> None:
+        """Hot-reload confidence/threshold settings from the Settings UI."""
+        self._config = config
+        self._logger = get_logger(__name__, self._config.log_level)
+        self._logger.info(
+            "Intent router reloaded confidence_threshold=%.2f enabled=%s",
+            self._config.confidence_threshold,
+            self._config.enabled,
+        )
 
     def route(
         self,
@@ -28,6 +42,8 @@ class IntentRouter:
         classification: ClassificationResult,
     ) -> Optional[dict[str, Any]]:
         """Return a tool payload dict, or ``None`` to fall through to the LLM."""
+        if not self._config.enabled:
+            return None
         if classification.intent is Intent.CHAT:
             return None
         if classification.confidence < self.confidence_threshold:
@@ -67,6 +83,11 @@ def get_router() -> IntentRouter:
     if _default_router is None:
         _default_router = IntentRouter()
     return _default_router
+
+
+def reload_router(config: IntentConfig) -> None:
+    """Hot-reload the shared intent router from Settings."""
+    get_router().reload_settings(config)
 
 
 def route_intent(
