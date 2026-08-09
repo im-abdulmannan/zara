@@ -42,7 +42,9 @@ def test_planner_handles_llm_failure():
     with patch("brain.planner.ask_agent", side_effect=RuntimeError("api down")):
         result = planner.plan_and_execute("hello", session)
 
-    assert "trouble" in result.spoken_text.lower()
+    # RuntimeError text is spoken when present; otherwise a generic fallback.
+    assert "api down" in result.spoken_text.lower()
+    assert result.used_tools is False
 
 
 def test_planner_handles_invalid_json():
@@ -52,4 +54,6 @@ def test_planner_handles_invalid_json():
     with patch("brain.planner.ask_agent", return_value="not json"):
         result = planner.plan_and_execute("hello", session)
 
-    assert "didn't understand" in result.spoken_text.lower()
+    # Weaker models often return prose — speak it as chat instead of failing.
+    assert result.spoken_text == "not json"
+    assert result.payload.get("tool") == "chat"

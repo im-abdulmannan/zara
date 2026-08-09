@@ -11,12 +11,16 @@ from core.llm_config import (
     connection_from_env,
     preset_by_id,
 )
+from brain.reason import reason_about_request
 from intent.config import IntentConfig
 from intent import classify_intent
 from memory.memory import load_history, save_history
 from memory.store import memory_summary, auto_capture
 from router import route_intent
 from tools.registry import get_registry
+
+# Latest agent thought for the current turn (shown in the terminal UI).
+_last_agent_thought: str = ""
 
 _active = connection_from_env()
 if not _active.api_key and OPENROUTER_API_KEY:
@@ -41,6 +45,11 @@ def get_active_base_url() -> str:
 
 def get_active_connection_summary() -> str:
     return f"{_active.label} · {_active.model} @ {get_active_base_url()}"
+
+
+def get_last_agent_thought() -> str:
+    """Return the reasoning text produced for the most recent ask_agent call."""
+    return _last_agent_thought
 
 
 def apply_llm_connection(connection: LlmConnection) -> None:
@@ -152,36 +161,32 @@ def reload_runtime_credentials(
 
 
 _GROUNDING_RULES = """
-IDENTITY (always true):
-- Your name is Zara, a voice-first Windows desktop assistant.
-- Wake phrases: "Hey Zara", "Hello Zara", "Hi Zara", or just "Zara".
-- Sleep phrases: "Sleep Zara", "Go to sleep", "Goodbye Zara", "Stop listening".
-- After wake, continuous conversation stays active until sleep or idle timeout.
-- Never claim you have no wake word. Never invent a different wake word.
+You are Zara, an agentic Windows desktop assistant.
 
-GROUNDING RULES (very important):
-- You have NO email or live web data. The current date and time is
-  provided to you; use it for reminders. The only other things you know
-  about the user are in the "What you know about the user" section.
-- For calendar, meeting, and reminder questions, ALWAYS use
-  query_calendar. Never invent meetings or schedule items.
-- Never invent times, appointments, or facts.
-- If asked about something you have not been told and is not available
-  via a tool, say you don't have that information. Do NOT guess.
-- For questions about tasks stored in memory, answer ONLY from the
-  stored "Ongoing tasks". If there are none, say there are none.
-- Use set_reminder for timed reminders; use remember for durable facts.
-- When the user asks to find/locate a project, folder, or file on this PC,
-  call search_files with query set to the name (e.g. {"tool":"search_files","query":"zara","kind":"folder"}).
-  Do NOT ask them for the path first if they said they don't know it.
-- Put tool arguments at the top level next to "tool" (not nested under "params").
-- For multi-step requests, return {"tools": [...], "response": "..."}.
-  Example: create_folder then open_folder for "create X and open it".
-- Spoken replies must be plain English only (no Arabic/Urdu mixed in).
+AGENT LOOP (required):
+1. Think: infer what the user wants in one short sentence.
+2. Act: choose the best tool, or chat if no tool fits.
+3. Never jump to a tool without that thought.
 
-Never return markdown.
-Never return explanations outside JSON.
-Return JSON only.
+Return ONLY JSON in one of these shapes:
+{"thought":"...","tool":"TOOL_NAME","arg":"value","response":"optional spoken line"}
+{"thought":"...","tools":[{"tool":"A",...},{"tool":"B",...}],"response":"..."}
+{"thought":"...","tool":"chat","response":"spoken reply"}
+
+IDENTITY:
+- Name: Zara. Text mode is active right now (no wake word required).
+- Never invent wake words, email, GPS/location, or live web data.
+
+TOOL GUIDANCE:
+- find/open/locate a folder or file -> search_files with open=true
+  Example: {"thought":"User wants the billboard folder opened.","tool":"search_files","query":"billboard","kind":"folder","open":true}
+- count files/folders on a drive -> count_items with directory
+- count inside a named folder -> count_items with query
+  Example: {"thought":"User wants counts inside the zara folder.","tool":"count_items","query":"zara","recursive":true}
+- current time -> get_time
+- calendar/reminders -> query_calendar / set_reminder (never invent schedule items)
+- Put tool args at the top level next to "tool" (not under "params").
+- Spoken replies: plain English only. No markdown outside JSON.
 """
 
 
@@ -223,8 +228,7 @@ def _cloud_credentials_ok() -> tuple[bool, str]:
     label = _active.label or "your provider"
     return (
         False,
-        f"I need an API key for {label}. Open the Provider tab, paste the key, "
-        "pick a model, and save.",
+        f"I need an API key for {label}. Set LLM_API_KEY and MODEL_NAME in your .env file.",
     )
 
 
@@ -233,19 +237,19 @@ def _chat_json(message: str) -> str:
 
 
 def _failure_message(model: str, exc: Exception) -> str:
-    """Transparent spoken error — user decides next steps in the Provider UI."""
+    """Transparent spoken error — point the user at .env model settings."""
     label = _active.label or "provider"
     if _is_rate_limited(exc):
         return (
             f"{label} model {model} is rate limited right now. "
-            "Open the Provider tab and choose a different model, or try again later."
+            "Set a different MODEL_NAME in your .env file, or try again later."
         )
     detail = str(exc).strip()
     if len(detail) > 180:
         detail = detail[:177] + "..."
     return (
         f"I could not use {label} model {model}. {detail} "
-        "Open the Provider tab to change the provider, API key, or model."
+        "Update LLM_API_KEY or MODEL_NAME in your .env file."
     )
 
 
@@ -253,12 +257,11 @@ conversation = load_history()
 
 
 def ask_agent(user_text):
+    global _last_agent_thought
+
     captured = auto_capture(user_text)
     if captured:
         print("Remembered:", "; ".join(captured))
-
-    classification = classify_intent(user_text)
-    print("Intent classification:", json.dumps(classification.to_dict()))
 
     conversation.append({
         "role": "user",
@@ -266,19 +269,40 @@ def ask_agent(user_text):
     })
     save_history(conversation)
 
-    routed = route_intent(user_text, classification)
-    if routed is not None:
-        reply = json.dumps(routed)
-        print("Intent route:", reply)
+    recent_text = " ".join(
+        str(turn.get("content") or "")
+        for turn in conversation[-8:]
+        if isinstance(turn, dict)
+    )
+
+    # 1) Think like an agent before any side effect.
+    decision = reason_about_request(user_text, recent_text=recent_text)
+    _last_agent_thought = decision.thought
+    print(f"Thought: {decision.thought}")
+
+    if decision.action is not None and not decision.use_llm:
+        reply = json.dumps(decision.action)
+        print(f"Action: {reply}")
         conversation.append({"role": "assistant", "content": reply})
         save_history(conversation)
         return reply
 
-    intent_context = (
-        "Pre-classified user intent (use as routing hint):\n"
-        + json.dumps(classification.to_dict(), indent=2)
-    )
+    # 2) Optional intent hint (may be rate-limited on free models — non-fatal).
+    classification = classify_intent(user_text)
+    print("Intent hint:", json.dumps(classification.to_dict()))
+    routed = route_intent(user_text, classification)
+    if routed is not None:
+        _last_agent_thought = (
+            decision.thought
+            + f" Intent router selected {routed.get('tool')}."
+        )
+        reply = json.dumps(routed)
+        print(f"Action: {reply}")
+        conversation.append({"role": "assistant", "content": reply})
+        save_history(conversation)
+        return reply
 
+    # 3) Main LLM finishes the agent plan.
     messages = [
         {
             "role": "system",
@@ -287,7 +311,10 @@ def ask_agent(user_text):
         {
             "role": "system",
             "content": (
-                intent_context
+                "Agent thought so far:\n"
+                + decision.thought
+                + "\n\nOptional intent hint:\n"
+                + json.dumps(classification.to_dict(), indent=2)
                 + "\n\nCurrent date and time: "
                 + datetime.now().strftime("%A %Y-%m-%d %H:%M")
                 + "\n\nWhat you know about the user:\n"
@@ -309,7 +336,7 @@ def ask_agent(user_text):
     model = _normalize_model_id(get_active_model() or "")
     if not model:
         reply = _chat_json(
-            "No model is selected. Open the Provider tab, pick a model, and save."
+            "No model is selected. Set MODEL_NAME in your .env file."
         )
         conversation.append({"role": "assistant", "content": reply})
         save_history(conversation)
@@ -324,12 +351,22 @@ def ask_agent(user_text):
         if not reply.strip():
             reply = _chat_json(
                 f"{_active.label} model {model} returned an empty reply. "
-                "Open the Provider tab to pick another model."
+                "Try a different MODEL_NAME in your .env file."
             )
+        else:
+            # Capture thought from model JSON when present.
+            try:
+                parsed = json.loads(reply)
+                if isinstance(parsed, dict) and parsed.get("thought"):
+                    _last_agent_thought = str(parsed.get("thought"))
+                    print(f"Thought: {_last_agent_thought}")
+            except Exception:
+                pass
     except Exception as exc:
         print(f"LLM call failed for {model} @ {get_active_base_url()}: {exc}")
         reply = _chat_json(_failure_message(model, exc))
 
+    print(f"Action: {reply[:300]}")
     conversation.append({
         "role": "assistant",
         "content": reply

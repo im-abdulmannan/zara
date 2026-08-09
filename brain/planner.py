@@ -40,6 +40,7 @@ class PlannerResult:
     used_tools: bool = False
     elapsed_sec: float = 0.0
     awaiting_confirmation: bool = False
+    thought: str = ""
 
 
 @dataclass
@@ -74,6 +75,9 @@ class Planner:
                 elapsed_sec=time.monotonic() - started,
             )
 
+        from agent import get_last_agent_thought
+
+        thought = get_last_agent_thought()
         _logger.debug("Agent raw response: %s", raw[:200] if raw else "")
 
         try:
@@ -87,8 +91,9 @@ class Planner:
                     payload={},
                     spoken_text=(
                         "The model returned an empty reply. "
-                        "Try again, or pick a different model in the Provider tab."
+                        "Try again, or set a different MODEL_NAME in your .env file."
                     ),
+                    thought=thought,
                     elapsed_sec=time.monotonic() - started,
                 )
             # Free / weaker models often return prose instead of JSON — speak it.
@@ -100,8 +105,12 @@ class Planner:
                 raw_agent_response=raw,
                 payload={"tool": "chat", "response": cleaned},
                 spoken_text=cleaned,
+                thought=thought,
                 elapsed_sec=time.monotonic() - started,
             )
+
+        if isinstance(payload, dict) and payload.get("thought"):
+            thought = str(payload.get("thought") or thought)
 
         tool_calls = payload.get("tool") or payload.get("tools")
         is_chat = payload.get("tool") == "chat" or (
@@ -115,6 +124,7 @@ class Planner:
                 payload=payload,
                 spoken_text=text,
                 used_tools=False,
+                thought=thought,
                 elapsed_sec=time.monotonic() - started,
             )
 
@@ -134,15 +144,19 @@ class Planner:
                     spoken_text=prompt,
                     used_tools=False,
                     awaiting_confirmation=True,
+                    thought=thought,
                     elapsed_sec=time.monotonic() - started,
                 )
 
-            return self._execute_payload(raw, payload, session, started)
+            result = self._execute_payload(raw, payload, session, started)
+            result.thought = thought
+            return result
 
         return PlannerResult(
             raw_agent_response=raw,
             payload=payload,
             spoken_text="I didn't understand the response.",
+            thought=thought,
             elapsed_sec=time.monotonic() - started,
         )
 

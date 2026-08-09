@@ -3,7 +3,7 @@
 .env.*
 !.env.example
 llm_providers.json
-# Per-user LLM keys + UI prefs (never commit)
+# Per-user LLM keys + local prefs (never commit)
 user_settings.json
 
 # Virtual environment
@@ -21,8 +21,6 @@ build/
 develop-eggs/
 /dist/
 downloads/
-web/node_modules/
-web/dist/
 eggs/
 .eggs/
 lib/

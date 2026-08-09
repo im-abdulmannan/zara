@@ -45,6 +45,8 @@ def test_default_registry_has_all_expected_tools():
         "search_google",
         "create_folder",
         "open_folder",
+        "list_directory",
+        "count_items",
         "search_files",
         "rename_file",
         "move_file",

@@ -47,6 +47,17 @@ def test_parse_agent_payload_repairs_windows_path_escapes():
     assert "C:" in payload["response"]
 
 
+def test_parse_agent_payload_repairs_trailing_extra_brace():
+    raw = (
+        '{"thought":"Search D for zara.","tool":"search_files",'
+        '"query":"zara","directory":"D:\\\\","kind":"folder","open":false}}'
+    )
+    payload = parse_agent_payload(raw)
+    assert payload["tool"] == "search_files"
+    assert payload["query"] == "zara"
+    assert payload["open"] is False
+
+
 def test_extract_tool_calls_single_tool():
     calls = extract_tool_calls({"tool": "get_time"})
     assert len(calls) == 1

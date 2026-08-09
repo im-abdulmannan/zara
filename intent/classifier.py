@@ -252,7 +252,7 @@ class IntentClassifier:
             if "429" in message or "RESOURCE_EXHAUSTED" in message or "quota" in message.lower():
                 self._logger.warning(
                     "Intent quota/rate-limit hit; falling back to main LLM. "
-                    "Disable Intent or switch model/provider in the UI."
+                    "Disable Intent or switch INTENT_MODEL / INTENT_API_KEY in .env."
                 )
             else:
                 self._logger.warning("Intent classification failed: %s", message)

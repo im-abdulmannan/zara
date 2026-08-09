@@ -78,11 +78,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design.
 
 4. **Configure your LLM**
 
-   Start Zara, open the settings UI, and paste your provider API key there.
-   Keys and model choices are stored in local `user_settings.json` (gitignored).
+   Copy `.env.example` to `.env` and set your provider credentials:
 
-   Optional: copy `.env.example` to `.env` only for headless/CI bootstrap or
-   non-secret voice tweaks — the UI does **not** write secrets into `.env`.
+   ```powershell
+   copy .env.example .env
+   ```
+
+   At minimum set `LLM_API_KEY` and `MODEL_NAME` (and optionally `INTENT_API_KEY`).
 
 5. **Run Zara**
 
@@ -92,12 +94,19 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design.
 
 ## Usage
 
-1. Zara starts and says hello.
-2. Say a wake phrase: **"Hey Zara"**, **"Hello Zara"**, or **"Zara"**.
-3. Zara replies **"I'm listening."** — speak your command.
-4. Follow-up commands do not require the wake word again (continuous mode is on by default).
-5. Say **"Sleep Zara"** or **"Go to sleep"** to return to wake-word mode.
-6. Press `Ctrl+C` to shut down.
+Zara currently runs in **terminal text mode** (STT/TTS disabled):
+
+1. Start with `python app.py`.
+2. Type a request at the `You>` prompt and press Enter.
+3. Zara prints the reply and runs any matching tools (e.g. open a found folder).
+4. Type `quit` or press `Ctrl+C` to exit.
+
+Example:
+
+```text
+You> find the zara folder from drive D
+Zara: Opening folder D:\zara.
+```
 
 ## Request flow
 
