@@ -10,43 +10,21 @@ from intent.exceptions import IntentClassificationError
 from intent.logging_config import get_logger
 from intent.models import ClassificationResult, Intent
 
-CLASSIFICATION_PROMPT = """You are an intent classifier for Zara, a desktop voice assistant.
+CLASSIFICATION_PROMPT = """You are an intent classifier for Zara, a Windows desktop assistant.
 
 Classify the user message into exactly ONE intent from this list:
 
-- CHAT: general conversation, greetings, questions, chit-chat, or anything that does not fit another intent
-- REMINDER_CREATE: set a reminder, alarm, or timed notification (e.g. "remind me at 5pm to call mom")
-- REMINDER_DELETE: cancel, remove, or delete a reminder (e.g. "cancel my first reminder")
-- MEETING_CREATE: schedule or create a meeting or appointment
-- MEETING_QUERY: ask about meetings or appointments (e.g. "what meetings do I have today?")
-- NOTE_CREATE: create, save, or write a note
-- NOTE_QUERY: find, read, or search notes
-- MEMORY_SAVE: tell Zara to remember a fact, preference, name, or task (not a timed reminder)
-- MEMORY_QUERY: ask what Zara remembers about the user
-- HABIT_CREATE: create or track a recurring habit (e.g. "track drinking water daily at 7am")
-- HABIT_QUERY: list or ask about habits
-- HABIT_DONE: mark a habit as done or completed today
+- CHAT: general conversation, greetings, or anything that does not fit another intent
 - OPEN_APPLICATION: open an app or website (e.g. "open chrome", "launch vscode", "go to youtube")
 - WEB_SEARCH: search the web or Google for information
-- SYSTEM_COMMAND: shutdown, restart, lock the PC, or ask for the current time
+- SYSTEM_COMMAND: shutdown, restart, lock the PC, volume, brightness, screenshot, or ask for the current time
 
 Extract relevant entities when present. Use empty object {} when none apply.
 
 Entity keys by intent:
-- REMINDER_CREATE: title, time, repeat (once|daily|weekly|monthly)
-- REMINDER_DELETE: index, title
-- MEETING_CREATE: title, date, time, attendees
-- MEETING_QUERY: date, query
-- NOTE_CREATE: title, content
-- NOTE_QUERY: query
-- MEMORY_SAVE: kind (name|preference|fact|task), key, value
-- MEMORY_QUERY: query
-- HABIT_CREATE: title, frequency (daily|weekday|weekend|weekly|monthly), time
-- HABIT_QUERY: none
-- HABIT_DONE: index, title
 - OPEN_APPLICATION: app, website
 - WEB_SEARCH: query
-- SYSTEM_COMMAND: command (shutdown|restart|lock|get_time)
+- SYSTEM_COMMAND: command (shutdown|restart|lock|get_time|volume|brightness|screenshot)
 - CHAT: none
 
 Return ONLY valid JSON with this exact shape:
@@ -60,7 +38,6 @@ Rules:
 - confidence is a float from 0.0 to 1.0 reflecting how sure you are
 - intent must be one of the listed names exactly (uppercase)
 - entities must be a JSON object (not an array)
-- prefer REMINDER_CREATE over MEMORY_SAVE when a specific time is mentioned
 - prefer OPEN_APPLICATION over WEB_SEARCH when the user wants to open something directly
 
 User message:

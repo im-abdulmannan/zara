@@ -33,12 +33,9 @@ wheels/
 .installed.cfg
 *.egg
 
-# Local runtime data
-*.sqlite
-*.sqlite3
+# Local chat history (optional persistence)
 memory/history.json
-memory/short_term.json
-memory/long_term.json
+memory/task_state.json
 
 # IDE and OS
 .idea/
@@ -58,7 +55,3 @@ desktop.ini
 coverage/
 htmlcov/
 .coverage
-
-# Whisper / ML model caches (downloaded at runtime)
-*.bin
-models/

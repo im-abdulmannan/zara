@@ -4,26 +4,6 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional
 
 from tools.base import BaseTool, ToolResult
-from tools.domain import (
-    CancelReminderTool,
-    CreateHabitTool,
-    CreateMeetingTool,
-    CreateNoteTool,
-    DeleteHabitTool,
-    ExportCalendarTool,
-    ImportCalendarTool,
-    ListHabitsTool,
-    ListNotesTool,
-    ListRemindersTool,
-    MarkHabitDoneTool,
-    PauseHabitTool,
-    QueryCalendarTool,
-    QueryMemoryTool,
-    RememberTool,
-    ResumeHabitTool,
-    SearchNotesTool,
-    SetReminderTool,
-)
 from tools.logging_config import get_logger
 from tools.registration import registered_tool_classes
 
@@ -41,38 +21,19 @@ def _load_tool_modules() -> None:
     import tools.clipboard  # noqa: F401
     import tools.filesystem  # noqa: F401
     import tools.system  # noqa: F401
+    import tools.web_search  # noqa: F401
+    import tools.capabilities.application  # noqa: F401
+    import tools.capabilities.clipboard  # noqa: F401
+    import tools.capabilities.document  # noqa: F401
+    import tools.capabilities.filesystem  # noqa: F401
+    import tools.capabilities.system  # noqa: F401
 
     _modules_loaded = True
 
 
-def _domain_tools() -> list[BaseTool]:
-    """Runtime-backed domain tools (registered explicitly)."""
-    return [
-        RememberTool(),
-        SetReminderTool(),
-        ListRemindersTool(),
-        CancelReminderTool(),
-        CreateHabitTool(),
-        ListHabitsTool(),
-        MarkHabitDoneTool(),
-        PauseHabitTool(),
-        ResumeHabitTool(),
-        DeleteHabitTool(),
-        QueryCalendarTool(),
-        CreateMeetingTool(),
-        ExportCalendarTool(),
-        ImportCalendarTool(),
-        CreateNoteTool(),
-        SearchNotesTool(),
-        ListNotesTool(),
-        QueryMemoryTool(),
-    ]
-
-
 def _default_tools() -> list[BaseTool]:
     _load_tool_modules()
-    discovered = [cls() for cls in registered_tool_classes()]
-    return discovered + _domain_tools()
+    return [cls() for cls in registered_tool_classes()]
 
 
 class ToolRegistry:
@@ -134,9 +95,26 @@ class ToolRegistry:
             '{"tools": [{"tool": "<name>", ...params}, ...], "response": "optional final reply"}',
             "You may also return a single tool as: {\"tool\": \"<name>\", ...params}",
             "",
-            "Tool catalog:",
+            "High-level capabilities (prefer these when they fit):",
         ]
-        for tool in sorted(self._tools.values(), key=lambda t: t.name):
+        capabilities = [t for t in self._tools.values() if getattr(t, "is_capability", False)]
+        granular = [t for t in self._tools.values() if not getattr(t, "is_capability", False)]
+        for tool in sorted(capabilities, key=lambda t: t.name):
+            schema = tool.schema()
+            required = ", ".join(schema["required"]) or "none"
+            lines.append(f"- {tool.name}: {tool.description}")
+            if schema["parameters"]:
+                param_desc = "; ".join(
+                    f"{name} ({spec['description']})"
+                    for name, spec in schema["parameters"].items()
+                )
+                lines.append(f"  params: {param_desc}")
+            lines.append(f"  required: {required}")
+            if schema.get("requires_confirmation"):
+                lines.append("  requires_confirmation: true")
+        lines.append("")
+        lines.append("Other tools:")
+        for tool in sorted(granular, key=lambda t: t.name):
             schema = tool.schema()
             required = ", ".join(schema["required"]) or "none"
             lines.append(f"- {tool.name}: {tool.description}")

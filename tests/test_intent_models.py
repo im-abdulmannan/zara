@@ -5,7 +5,7 @@ from intent.models import ClassificationResult, Intent
 
 
 def test_intent_from_value_string():
-    assert Intent.from_value("REMINDER_CREATE") is Intent.REMINDER_CREATE
+    assert Intent.from_value("OPEN_APPLICATION") is Intent.OPEN_APPLICATION
 
 
 def test_intent_from_value_unknown_defaults_to_chat():
@@ -14,14 +14,14 @@ def test_intent_from_value_unknown_defaults_to_chat():
 
 def test_classification_result_to_dict():
     result = ClassificationResult(
-        intent=Intent.NOTE_CREATE,
+        intent=Intent.WEB_SEARCH,
         confidence=0.88,
-        entities={"title": "x"},
+        entities={"query": "python"},
     )
     data = result.to_dict()
-    assert data["intent"] == "NOTE_CREATE"
+    assert data["intent"] == "WEB_SEARCH"
     assert data["confidence"] == 0.88
-    assert data["entities"]["title"] == "x"
+    assert data["entities"]["query"] == "python"
 
 
 def test_chat_fallback():

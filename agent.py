@@ -15,8 +15,8 @@ from brain.reason import reason_about_request
 from intent.config import IntentConfig
 from intent import classify_intent
 from memory.memory import load_history, save_history
-from memory.store import memory_summary, auto_capture
 from router import route_intent
+from tools.executor import parse_agent_payload
 from tools.registry import get_registry
 
 # Latest agent thought for the current turn (shown in the terminal UI).
@@ -124,7 +124,7 @@ def apply_llm_connection(connection: LlmConnection) -> None:
         print(f"Failed to reload intent router: {exc}")
 
 
-def reload_runtime_credentials(
+def reload_llm_credentials(
     *,
     openrouter_api_key: str | None = None,
     model_name: str | None = None,
@@ -178,13 +178,14 @@ IDENTITY:
 - Never invent wake words, email, GPS/location, or live web data.
 
 TOOL GUIDANCE:
-- find/open/locate a folder or file -> search_files with open=true
+- disk -> filesystem (search|read|create|copy|…); reports/assignments -> document (read|create|append|to_docx)
+- apps -> application (open|close|search); time/volume/screenshot -> system; clipboard -> clipboard (read|write)
   Example: {"thought":"User wants the billboard folder opened.","tool":"search_files","query":"billboard","kind":"folder","open":true}
 - count files/folders on a drive -> count_items with directory
 - count inside a named folder -> count_items with query
   Example: {"thought":"User wants counts inside the zara folder.","tool":"count_items","query":"zara","recursive":true}
 - current time -> get_time
-- calendar/reminders -> query_calendar / set_reminder (never invent schedule items)
+- research / external facts -> web_search (SerpAPI; set SERPAPI_API_KEY in .env)
 - Put tool args at the top level next to "tool" (not under "params").
 - Spoken replies: plain English only. No markdown outside JSON.
 """
@@ -256,12 +257,74 @@ def _failure_message(model: str, exc: Exception) -> str:
 conversation = load_history()
 
 
-def ask_agent(user_text):
+def llm_complete(messages: list[dict]) -> str:
+    """Call the active LLM without updating conversation history."""
+    ok, credential_hint = _cloud_credentials_ok()
+    if not ok:
+        return _chat_json(credential_hint)
+
+    model = _normalize_model_id(get_active_model() or "")
+    if not model:
+        return _chat_json("No model is selected. Set MODEL_NAME in your .env file.")
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+        )
+        reply = (response.choices[0].message.content if response.choices else None) or ""
+        if not reply.strip():
+            return _chat_json(
+                f"{_active.label} model {model} returned an empty reply. "
+                "Try a different MODEL_NAME in your .env file."
+            )
+        return reply.strip()
+    except Exception as exc:
+        print(f"LLM call failed for {model} @ {get_active_base_url()}: {exc}")
+        return _chat_json(_failure_message(model, exc))
+
+
+def llm_complete_json(system: str, user: str) -> str:
+    """Single-turn JSON-oriented LLM call (strategic planner, etc.)."""
+    return llm_complete(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+    )
+
+
+def ask_agent_ephemeral(instruction: str, *, goal: str = "") -> str:
+    """Run one tool-planning turn for a work-plan step (no history persistence)."""
     global _last_agent_thought
 
-    captured = auto_capture(user_text)
-    if captured:
-        print("Remembered:", "; ".join(captured))
+    context = (
+        "Work-plan step execution. Use tools when needed; no browser automation.\n"
+        "Current date and time: "
+        + datetime.now().strftime("%A %Y-%m-%d %H:%M")
+    )
+    if goal:
+        context += f"\nOverall goal: {goal}"
+
+    messages = [
+        {"role": "system", "content": build_system_prompt()},
+        {"role": "system", "content": context},
+        {"role": "user", "content": instruction},
+    ]
+    raw = llm_complete(messages)
+    try:
+        parsed = parse_agent_payload(raw)
+        if isinstance(parsed, dict) and parsed.get("thought"):
+            _last_agent_thought = str(parsed.get("thought"))
+            print(f"Thought: {_last_agent_thought}")
+    except Exception:
+        _last_agent_thought = "Executing plan step."
+    print(f"Action: {(raw or '')[:300]}")
+    return raw
+
+
+def ask_agent(user_text):
+    global _last_agent_thought
 
     conversation.append({
         "role": "user",
@@ -317,8 +380,6 @@ def ask_agent(user_text):
                 + json.dumps(classification.to_dict(), indent=2)
                 + "\n\nCurrent date and time: "
                 + datetime.now().strftime("%A %Y-%m-%d %H:%M")
-                + "\n\nWhat you know about the user:\n"
-                + memory_summary()
             )
         }
     ]

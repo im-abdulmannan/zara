@@ -7,16 +7,11 @@ import sys
 from brain.planner import Planner
 from core.logging_config import get_logger
 from core.session import Session
-from runtime import get_runtime, shutdown_runtime
+from core.task_store import load_task_state
 
 _logger = get_logger(__name__)
 
 _QUIT_WORDS = {"quit", "exit", "q", "bye", "goodbye"}
-
-
-def _mute_tts(runtime) -> None:
-    """Disable pyttsx3 — keep the speaker lock but never produce audio."""
-    runtime.speaker._speak_func = lambda _text: None
 
 
 def _print_reply(text: str) -> None:
@@ -27,11 +22,11 @@ def _print_reply(text: str) -> None:
 
 
 def main() -> None:
-    runtime = get_runtime()
-    _mute_tts(runtime)
-
     planner = Planner()
     session = Session(continuous_mode=True, interruptible=False)
+    session.task_state = load_task_state(session.conversation_id)
+    if session.task_state and session.task_state.goal:
+        print(f"Resumed task: {session.task_state.goal}\n")
     shutting_down = False
 
     def _quit_zara(*_args) -> None:
@@ -40,7 +35,6 @@ def main() -> None:
             return
         shutting_down = True
         print("\nShutting down Zara...")
-        shutdown_runtime()
 
     signal.signal(signal.SIGINT, _quit_zara)
     if hasattr(signal, "SIGTERM"):
@@ -48,11 +42,12 @@ def main() -> None:
 
     from agent import get_active_connection_summary
 
-    print("Zara text mode (STT/TTS disabled)")
+    print("Zara text mode")
     print(f"Model: {get_active_connection_summary()}")
-    print('Type a request and press Enter. Examples:')
-    print('  find the zara folder from drive D')
-    print('  what time is it')
+    print("Type a request and press Enter. Examples:")
+    print("  find the zara folder from drive D")
+    print("  open notepad")
+    print("  what time is it")
     print("Type quit or press Ctrl+C to exit.\n")
 
     try:
@@ -76,6 +71,11 @@ def main() -> None:
 
             session.add_user_turn(user_text)
             session.add_assistant_turn(result.spoken_text)
+
+            if result.work_plan_outline:
+                print(result.work_plan_outline)
+                print()
+
             _print_reply(result.spoken_text)
 
             if result.awaiting_confirmation:

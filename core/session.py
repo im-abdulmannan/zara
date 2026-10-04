@@ -6,6 +6,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from core.task_state import TaskState
+
 
 @dataclass
 class Session:
@@ -18,6 +20,7 @@ class Session:
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     history: List[Dict[str, str]] = field(default_factory=list)
     current_task: Optional[str] = None
+    task_state: Optional[TaskState] = None
     tool_history: List[Dict[str, Any]] = field(default_factory=list)
     last_activity: float = field(default_factory=time.monotonic)
     active_window: Optional[str] = None

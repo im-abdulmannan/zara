@@ -37,6 +37,7 @@ class BaseTool(ABC):
     parameters: tuple[ToolParameter, ...] = ()
     requires_confirmation: bool = False
     intent_keywords: ClassVar[tuple[str, ...]] = ()
+    is_capability: ClassVar[bool] = False
 
     @abstractmethod
     def execute(self, params: Mapping[str, Any]) -> ToolResult:

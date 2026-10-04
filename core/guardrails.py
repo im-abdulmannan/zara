@@ -12,6 +12,12 @@ HIGH_RISK_TOOLS: Set[str] = {
     "restart_pc",
 }
 
+# Capability tools: risky when operation matches (tool name is the capability).
+_CAPABILITY_RISKY_OPS: dict[str, set[str]] = {
+    "filesystem": {"delete"},
+    "system": {"shutdown", "restart"},
+}
+
 CONFIRMATION_ACCEPT_PHRASES = {
     "yes",
     "yeah",
@@ -86,9 +92,17 @@ class GuardrailManager:
         tool_name: str,
         *,
         requires_confirmation: bool = False,
+        arguments: Dict[str, Any] | None = None,
     ) -> bool:
         """True when the tool is high-risk or marked ``requires_confirmation``."""
-        return requires_confirmation or self.is_high_risk(tool_name)
+        if requires_confirmation or self.is_high_risk(tool_name):
+            return True
+        if arguments:
+            operation = str(arguments.get("operation") or "").strip().lower()
+            risky = _CAPABILITY_RISKY_OPS.get(tool_name.lower().strip(), set())
+            if operation in risky:
+                return True
+        return False
 
     def request_confirmation(
         self,
@@ -98,7 +112,12 @@ class GuardrailManager:
         full_payload: Dict[str, Any] | None = None,
     ) -> str:
         """Set a pending high-risk action and return confirmation query prompt."""
-        target = arguments.get("path") or arguments.get("target") or tool_name
+        operation = arguments.get("operation")
+        target = (
+            arguments.get("path")
+            or arguments.get("target")
+            or (f"operation={operation}" if operation else tool_name)
+        )
         message = (
             f"This will run {tool_name} on {target}. "
             "Say yes to confirm, or no to cancel."

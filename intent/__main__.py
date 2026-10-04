@@ -1,7 +1,7 @@
 """CLI for manual intent classification testing.
 
 Usage:
-    python -m intent "remind me at 5pm to call mom"
+    python -m intent "open chrome"
 """
 from __future__ import annotations
 
